@@ -3,15 +3,33 @@ plugins {
 }
 
 android {
-    namespace 'nb.pingpong.throw'
+    namespace 'nb.pingpong.ping'
     compileSdk 34
 
     defaultConfig {
-        applicationId "nb.pingpong.throw"
+        applicationId "nb.pingpong.ping"
         minSdk 21
         targetSdk 34
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
+    }
+
+    // one APK per ABI plus a universal APK
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            universalApk true
+        }
+    }
+
+    // e.g. Ping-Phone-1.0.0-arm64-v8a.apk / Ping-Phone-1.0.0-universal.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def abi = output.getFilter("ABI") ?: "universal"
+            outputFileName = "Ping-Phone-${variant.versionName}-${abi}.apk"
+        }
     }
 
     signingConfigs {

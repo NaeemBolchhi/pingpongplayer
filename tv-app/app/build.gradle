@@ -3,15 +3,33 @@ plugins {
 }
 
 android {
-    namespace 'nb.pingpong.fetch'
+    namespace 'nb.pingpong.pong'
     compileSdk 34
 
     defaultConfig {
-        applicationId "nb.pingpong.fetch"
+        applicationId "nb.pingpong.pong"
         minSdk 21
         targetSdk 34
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
+    }
+
+    // one APK per ABI plus a universal APK
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            universalApk true
+        }
+    }
+
+    // e.g. Pong-TV-1.0.0-arm64-v8a.apk / Pong-TV-1.0.0-universal.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def abi = output.getFilter("ABI") ?: "universal"
+            outputFileName = "Pong-TV-${variant.versionName}-${abi}.apk"
+        }
     }
 
     signingConfigs {
@@ -50,7 +68,5 @@ dependencies {
     implementation 'androidx.cardview:cardview:1.0.0'
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'org.videolan.android:libvlc-all:3.5.1'
-    implementation 'io.github.junkfood02.youtubedl-android:library:0.16.0'
     implementation 'com.google.code.gson:gson:2.10.1'
-    implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
 }
