@@ -633,7 +633,6 @@ public class MainActivity extends FragmentActivity {
         try {
             int st = mp.getPlayerState();
             if (st == Media.State.Opening) s.state = "opening";
-            else if (st == Media.State.Buffering) s.state = "buffering";
             else if (st == Media.State.Playing) s.state = "playing";
             else if (st == Media.State.Paused) s.state = "paused";
             else if (st == Media.State.Stopped) s.state = "stopped";
