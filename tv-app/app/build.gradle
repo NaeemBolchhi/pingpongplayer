@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'nb.pingpong.fetch'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "nb.pingpong.fetch"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    signingConfigs {
+        release {
+            if (System.getenv("KEYSTORE_FILE")) {
+                storeFile file(System.getenv("KEYSTORE_FILE"))
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            } else {
+                storeFile file("test.keystore")
+                storePassword "test123"
+                keyAlias "testkey"
+                keyPassword "test123"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'androidx.leanback:leanback:1.0.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.cardview:cardview:1.0.0'
+    implementation 'com.google.android.material:material:1.9.0'
+    implementation 'org.videolan.android:libvlc-all:3.5.1'
+    implementation 'io.github.junkfood02.youtubedl-android:library:0.16.0'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
+}
