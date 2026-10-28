@@ -14,6 +14,7 @@ public class TvStatus {
         }
     }
 
+    public String name = "";        // the name this TV is advertised under
     public String state = "idle";   // idle, opening, buffering, playing, paused, stopped, ended, error
     public String title = "";
     public long time;               // ms

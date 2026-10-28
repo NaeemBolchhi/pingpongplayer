@@ -118,6 +118,52 @@ public class SubtitleApi {
         if (token == null) throw new IOException("Login failed");
     }
 
+    /**
+     * Checks that a link really leads to a subtitle file (SRT / VTT / ASS / SSA, optionally gzipped).
+     * Blocking: call from a background thread.
+     */
+    public static boolean looksLikeSubtitle(String link) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(link).openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(10000);
+            c.setInstanceFollowRedirects(true);
+            c.setRequestProperty("User-Agent", USER_AGENT);
+            if (c.getResponseCode() >= 400) return false;
+            InputStream in = c.getInputStream();
+            byte[] head = new byte[256 * 1024];
+            int len = 0, n;
+            while (len < head.length && (n = in.read(head, len, head.length - len)) > 0) len += n;
+            in.close();
+            if (len == 0) return false;
+            byte[] data = java.util.Arrays.copyOf(head, len);
+            if (len > 2 && (data[0] & 0xFF) == 0x1F && (data[1] & 0xFF) == 0x8B) {
+                java.util.zip.GZIPInputStream gz = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(data));
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] b = new byte[8192];
+                int r;
+                try {
+                    while ((r = gz.read(b)) > 0 && bos.size() < 256 * 1024) bos.write(b, 0, r);
+                } catch (IOException ignored) {
+                    // truncated gzip: keep what we got
+                }
+                data = bos.toByteArray();
+            }
+            String text = new String(data, StandardCharsets.UTF_8).toLowerCase(java.util.Locale.ROOT);
+            String t = text.trim();
+            if (t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<?xml") && t.contains("<html")) {
+                return false;
+            }
+            return text.contains("-->") || text.contains("[script info]") || text.contains("dialogue:")
+                    || text.contains("webvtt");
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
     private static String str(JsonObject o, String k) {
         return o.has(k) && !o.get(k).isJsonNull() ? o.get(k).getAsString() : null;
     }

@@ -1,3 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="primary">#A43E00</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="primary_container">#FFDBCC</color>
+    <color name="on_primary_container">#351000</color>
+    <color name="secondary_container">#F7DDD2</color>
+    <color name="on_secondary_container">#2B160E</color>
+    <color name="surface">#FFF8F5</color>
+    <color name="on_surface">#221A16</color>
+    <color name="on_surface_variant">#53443C</color>
+    <color name="outline">#85736A</color>
+    <color name="outline_variant">#D8C2B8</color>
+    <color name="surface_container">#F9EBE4</color>
+    <color name="surface_container_high">#F3E5DE</color>
+    <color name="surface_container_highest">#EDDFD8</color>
+    <color name="error">#BA1A1A</color>
+    <color name="error_container">#FFDAD6</color>
+    <color name="on_error_container">#410002</color>
+    <color name="ok">#1B6D2F</color>
+    <color name="snack_bg">#382E2A</color>
+    <color name="snack_text">#FBEEE8</color>
+    <color name="snack_action">#FFB596</color>
     <color name="ic_launcher_background">#000000</color>
 </resources>

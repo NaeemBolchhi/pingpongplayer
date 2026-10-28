@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.View;
 import android.widget.Button;
@@ -47,7 +48,9 @@ public class MainActivity extends FragmentActivity {
     private static final String SERVICE_TYPE = "_streamcast._tcp.";
     private static final int CONTROL_PORT = 8888;
     private static final int SEEK_STEP_MS = 10000;
+    private static final int SEEK_BAR_STEP_MS = 30000;
     private static final int CONTROLS_TIMEOUT_MS = 5000;
+    private static final int LOAD_TIMEOUT_MS = 30000;
 
     private VLCVideoLayout videoLayout;
     private LibVLC libVLC;
@@ -55,7 +58,12 @@ public class MainActivity extends FragmentActivity {
     private LinearLayout controlsOverlay;
     private SeekBar seekBar;
     private TextView tvTime, tvIdle, tvTitle;
-    private Button btnPlayPause, btnSubtitle;
+    private Button btnPlayPause, btnSubtitle, btnErrorOk;
+    private View errorOverlay;
+    private TextView tvErrorUrl;
+    private volatile boolean errorShown = false;
+    private boolean loaded = false;
+    private TextView seekLeft, seekRight;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean controlsVisible = false;
     private boolean viewsAttached = false;
@@ -101,7 +109,15 @@ public class MainActivity extends FragmentActivity {
         btnPlayPause = findViewById(R.id.btn_play_pause);
         btnSubtitle = findViewById(R.id.btn_subtitle);
 
-        tvIdle.setText("Pong! is ready as \"" + serviceName + "\"\n\nShare a link to Ping! on your phone to start playing.");
+        seekLeft = findViewById(R.id.seek_left);
+        seekRight = findViewById(R.id.seek_right);
+        errorOverlay = findViewById(R.id.error_overlay);
+        tvErrorUrl = findViewById(R.id.tv_error_url);
+        btnErrorOk = findViewById(R.id.btn_error_ok);
+        btnErrorOk.setOnClickListener(v -> dismissError());
+
+        serviceName = prefs.getString("device_name", serviceName);
+        updateIdleText();
 
         createPlayer();
         applyHdr();
@@ -151,6 +167,12 @@ public class MainActivity extends FragmentActivity {
         if (subBold) args.add("--freetype-bold");
         libVLC = new LibVLC(this, args);
         mediaPlayer = new MediaPlayer(libVLC);
+        mediaPlayer.setEventListener(new MediaPlayer.EventListener() {
+            @Override
+            public void onEvent(MediaPlayer.Event event) {
+                onPlayerEvent(event);
+            }
+        });
         if (viewsAttached) {
             viewsAttached = false;
             attachViews();
@@ -185,6 +207,7 @@ public class MainActivity extends FragmentActivity {
         }
         boolean attached = viewsAttached;
         if (mediaPlayer != null) {
+            mediaPlayer.setEventListener(null);
             try {
                 mediaPlayer.stop();
             } catch (Exception ignored) {
@@ -204,6 +227,85 @@ public class MainActivity extends FragmentActivity {
         }
     }
 
+    // ---------------------------------------------------- load errors
+
+    private void onPlayerEvent(final MediaPlayer.Event event) {
+        runOnUiThread(() -> {
+            int t = event.type;
+            if (t == MediaPlayer.Event.EncounteredError) {
+                if (currentUrl != null) showError();
+            } else if (t == MediaPlayer.Event.TimeChanged || t == MediaPlayer.Event.LengthChanged
+                    || t == MediaPlayer.Event.Vout) {
+                try {
+                    if (mediaPlayer != null && (mediaPlayer.getTime() > 0 || mediaPlayer.getLength() > 0
+                            || t == MediaPlayer.Event.Vout)) {
+                        loaded = true;
+                        handler.removeCallbacks(loadTimeout);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        });
+    }
+
+    private final Runnable loadTimeout = new Runnable() {
+        @Override
+        public void run() {
+            if (!loaded && currentUrl != null) showError();
+        }
+    };
+
+    private void showError() {
+        if (errorShown) return;
+        errorShown = true;
+        handler.removeCallbacks(loadTimeout);
+        try {
+            if (mediaPlayer != null) mediaPlayer.stop();
+        } catch (Exception ignored) {
+        }
+        hideControls();
+        tvIdle.setVisibility(View.GONE);
+        tvErrorUrl.setText(currentUrl == null ? "" : currentUrl);
+        errorOverlay.setVisibility(View.VISIBLE);
+        btnErrorOk.requestFocus();
+    }
+
+    private void hideError() {
+        errorShown = false;
+        errorOverlay.setVisibility(View.GONE);
+    }
+
+    /** OK on the error screen: forget the failed link and go back to the idle screen. */
+    private void dismissError() {
+        hideError();
+        handler.removeCallbacks(loadTimeout);
+        currentUrl = null;
+        currentTitle = "";
+        subtitleFiles.clear();
+        tvIdle.setVisibility(View.VISIBLE);
+    }
+
+    private void updateIdleText() {
+        tvIdle.setText("Pong! is ready as \"" + serviceName
+                + "\"\n\nShare a link to Ping! on your phone to start playing.");
+    }
+
+    private void renameDevice(String raw) {
+        String n = raw == null ? "" : raw.trim().replace('\n', ' ');
+        if (n.length() > 40) n = n.substring(0, 40);
+        if (n.isEmpty() || n.equals(serviceName)) return;
+        serviceName = n;
+        prefs.edit().putString("device_name", n).apply();
+        updateIdleText();
+        if (nsdManager != null && registrationListener != null) {
+            try {
+                nsdManager.unregisterService(registrationListener);
+            } catch (Exception ignored) {
+            }
+        }
+        registerService();
+    }
+
     private void playMedia(String url) {
         subtitleFiles.clear();
         currentUrl = url;
@@ -216,9 +318,13 @@ public class MainActivity extends FragmentActivity {
         try {
             Media media = new Media(libVLC, Uri.parse(url));
             if (startMs > 1000) media.addOption(":start-time=" + (startMs / 1000.0));
+            hideError();
             mediaPlayer.setMedia(media);
             media.release();
             mediaPlayer.play();
+            loaded = false;
+            handler.removeCallbacks(loadTimeout);
+            if (play) handler.postDelayed(loadTimeout, LOAD_TIMEOUT_MS);
             if (!play) {
                 handler.postDelayed(() -> {
                     try {
@@ -249,10 +355,51 @@ public class MainActivity extends FragmentActivity {
         else mediaPlayer.play();
     }
 
+    private long seekTarget, lastSeekAt;
+    private long feedbackTotal, lastFeedbackAt, lastKeySeekAt;
+
+    /** Seeks and flashes "+10s" / "-10s" on the matching side; repeated seeks add up. */
+    private void seekWithFeedback(long deltaMs) {
+        seekBy(deltaMs);
+        long now = SystemClock.uptimeMillis();
+        boolean sameDir = feedbackTotal != 0 && (feedbackTotal > 0) == (deltaMs > 0);
+        if (now - lastFeedbackAt > 900 || !sameDir) feedbackTotal = 0;
+        feedbackTotal += deltaMs;
+        lastFeedbackAt = now;
+        long secs = Math.abs(feedbackTotal) / 1000;
+        String label = (feedbackTotal < 0 ? "\u2212" : "+") + secs + "s";
+        TextView show = feedbackTotal < 0 ? seekLeft : seekRight;
+        TextView other = feedbackTotal < 0 ? seekRight : seekLeft;
+        other.setVisibility(View.GONE);
+        show.setText((feedbackTotal < 0 ? "\u23EA\n" : "\u23E9\n") + label);
+        show.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideFeedback);
+        handler.postDelayed(hideFeedback, 800);
+    }
+
+    private final Runnable hideFeedback = new Runnable() {
+        @Override
+        public void run() {
+            seekLeft.setVisibility(View.GONE);
+            seekRight.setVisibility(View.GONE);
+            feedbackTotal = 0;
+        }
+    };
+
+
     private void seekBy(long deltaMs) {
         if (mediaPlayer == null) return;
         long len = mediaPlayer.getLength();
-        seekTo(mediaPlayer.getTime() + deltaMs, len);
+        long now = SystemClock.uptimeMillis();
+        // The player's clock lags behind a seek, so chained seeks build on the last target.
+        long base = now - lastSeekAt < 1000 ? seekTarget : mediaPlayer.getTime();
+        long t = Math.max(0, base + deltaMs);
+        if (len > 0) t = Math.min(t, len - 500 > 0 ? len - 500 : len);
+        seekTarget = t;
+        lastSeekAt = now;
+        seekTo(t, len);
+        if (len > 0) seekBar.setProgress((int) (t * 1000 / len));
+        tvTime.setText(formatTime(t) + " / " + (len > 0 ? formatTime(len) : "--:--"));
     }
 
     private void seekTo(long ms, long len) {
@@ -380,6 +527,8 @@ public class MainActivity extends FragmentActivity {
         if (currentUrl == null) return;
         controlsOverlay.setVisibility(View.VISIBLE);
         controlsVisible = true;
+        View f = getCurrentFocus();
+        if (f == null || f.getParent() == null) seekBar.requestFocus();
         handler.removeCallbacks(hideControlsRunnable);
         handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS);
     }
@@ -394,10 +543,49 @@ public class MainActivity extends FragmentActivity {
 
     private final Runnable hideControlsRunnable = this::hideControls;
 
+    /**
+     * Menu hidden: left/right seek 10s with on-screen feedback and never open the menu.
+     * Seek bar focused: left/right seek 30s.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int k = event.getKeyCode();
+        if (event.getAction() == KeyEvent.ACTION_DOWN && !errorShown && currentUrl != null
+                && (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            int dir = k == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1;
+            long now = SystemClock.uptimeMillis();
+            if (!controlsVisible) {
+                // holding the key repeats, but not faster than every 300ms
+                if (event.getRepeatCount() == 0 || now - lastKeySeekAt >= 300) {
+                    lastKeySeekAt = now;
+                    seekWithFeedback(dir * SEEK_STEP_MS);
+                }
+                return true;
+            }
+            if (getCurrentFocus() == seekBar) {
+                if (event.getRepeatCount() == 0 || now - lastKeySeekAt >= 200) {
+                    lastKeySeekAt = now;
+                    seekBy(dir * SEEK_BAR_STEP_MS);
+                    showControls();
+                }
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         View focus = getCurrentFocus();
         boolean onButton = controlsVisible && (focus == btnPlayPause || focus == btnSubtitle);
+
+        if (errorShown) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                dismissError();
+                return true;
+            }
+            return super.onKeyDown(keyCode, event); // lets the OK button take focus / clicks
+        }
 
         // keys that work the same everywhere
         switch (keyCode) {
@@ -415,13 +603,11 @@ public class MainActivity extends FragmentActivity {
                 return true;
             case KeyEvent.KEYCODE_MEDIA_REWIND:
             case KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD:
-                seekBy(-SEEK_STEP_MS);
-                showControls();
+                seekWithFeedback(-SEEK_STEP_MS);
                 return true;
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
             case KeyEvent.KEYCODE_MEDIA_STEP_FORWARD:
-                seekBy(SEEK_STEP_MS);
-                showControls();
+                seekWithFeedback(SEEK_STEP_MS);
                 return true;
             case KeyEvent.KEYCODE_CAPTIONS:
             case KeyEvent.KEYCODE_MENU:
@@ -450,12 +636,10 @@ public class MainActivity extends FragmentActivity {
                 showControls();
                 return true;
             case KeyEvent.KEYCODE_DPAD_LEFT:
-                seekBy(-SEEK_STEP_MS);
-                showControls();
+                seekWithFeedback(-SEEK_STEP_MS);
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
-                seekBy(SEEK_STEP_MS);
-                showControls();
+                seekWithFeedback(SEEK_STEP_MS);
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_DPAD_DOWN:
@@ -487,8 +671,7 @@ public class MainActivity extends FragmentActivity {
             @Override
             public void onServiceRegistered(NsdServiceInfo info) {
                 serviceName = info.getServiceName();
-                runOnUiThread(() -> tvIdle.setText("Pong! is ready as \"" + serviceName
-                        + "\"\n\nShare a link to Ping! on your phone to start playing."));
+                runOnUiThread(() -> updateIdleText());
             }
 
             @Override
@@ -562,7 +745,14 @@ public class MainActivity extends FragmentActivity {
                 if (mp != null && mp.isPlaying()) mp.pause();
                 break;
             case "RESUME":
-                if (mp != null && !mp.isPlaying()) mp.play();
+                if (errorShown && currentUrl != null) {
+                    startMedia(currentUrl, 0, true); // retry the link that failed
+                } else if (mp != null && !mp.isPlaying()) {
+                    mp.play();
+                }
+                break;
+            case "RENAME":
+                renameDevice(arg);
                 break;
             case "SEEK":
                 if (mp != null) seekTo(Long.parseLong(arg), mp.getLength());
@@ -621,6 +811,7 @@ public class MainActivity extends FragmentActivity {
 
     private TvStatus buildStatus() {
         TvStatus s = new TvStatus();
+        s.name = serviceName;
         s.title = currentTitle;
         s.subSize = subSize;
         s.subColor = subColor;
@@ -628,6 +819,10 @@ public class MainActivity extends FragmentActivity {
         s.subBg = subBg;
         s.subBold = subBold;
         s.hdr = hdr;
+        if (errorShown) {
+            s.state = "error";
+            return s;
+        }
         MediaPlayer mp = mediaPlayer;
         if (mp == null || currentUrl == null) return s;
         try {

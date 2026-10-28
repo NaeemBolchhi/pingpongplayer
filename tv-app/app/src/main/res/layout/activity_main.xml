@@ -41,7 +41,7 @@
             android:id="@+id/seek_bar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:focusable="false"
+            android:focusable="true"
             android:max="1000" />
 
         <TextView
@@ -70,6 +70,90 @@
                 android:layout_height="wrap_content"
                 android:text="Subtitles" />
         </LinearLayout>
+    </LinearLayout>
+
+    <!-- double-tap style seek feedback -->
+    <TextView
+        android:id="@+id/seek_left"
+        android:layout_width="140dp"
+        android:layout_height="140dp"
+        android:layout_gravity="start|center_vertical"
+        android:layout_marginStart="96dp"
+        android:background="@drawable/seek_bubble"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/seek_right"
+        android:layout_width="140dp"
+        android:layout_height="140dp"
+        android:layout_gravity="end|center_vertical"
+        android:layout_marginEnd="96dp"
+        android:background="@drawable/seek_bubble"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <!-- shown when a link fails to load -->
+    <LinearLayout
+        android:id="@+id/error_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F2000000"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="64dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_error" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Couldn't play this video"
+            android:textColor="#FFFFFF"
+            android:textSize="36sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:text="Nothing loaded after 30 seconds. Check that the link works, then send it again."
+            android:textColor="#CCFFFFFF"
+            android:textSize="24sp" />
+
+        <TextView
+            android:id="@+id/tv_error_url"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:ellipsize="middle"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:maxLines="2"
+            android:textColor="#99FFFFFF"
+            android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/btn_error_ok"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:focusable="true"
+            android:minWidth="160dp"
+            android:text="OK" />
     </LinearLayout>
 
 </FrameLayout>

@@ -22,6 +22,20 @@ public class UsageStore {
                 .apply();
     }
 
+    /** Carries the usage history over when a TV is renamed. */
+    public void rename(String oldName, String newName) {
+        if (oldName.equals(newName)) return;
+        prefs.edit()
+                .putInt("count_" + newName, prefs.getInt("count_" + oldName, 0))
+                .putLong("time_" + newName, prefs.getLong("time_" + oldName, 0L))
+                .remove("count_" + oldName).remove("time_" + oldName)
+                .apply();
+    }
+
+    public int count(String name) {
+        return prefs.getInt("count_" + name, 0);
+    }
+
     /** Most used first; ties broken by most recently used. */
     public void sort(List<DeviceInfo> devices) {
         Collections.sort(devices, new Comparator<DeviceInfo>() {

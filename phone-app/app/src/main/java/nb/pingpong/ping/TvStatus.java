@@ -10,6 +10,7 @@ public class TvStatus {
         public String name;
     }
 
+    public String name = "";
     public String state = "idle";
     public String title = "";
     public long time;
