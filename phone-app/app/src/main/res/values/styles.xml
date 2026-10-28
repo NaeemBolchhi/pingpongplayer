@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- text -->
+    <style name="Ping" parent="" />
     <style name="Ping.Cap">
         <item name="android:textSize">12sp</item>
         <item name="android:textColor">@color/on_surface_variant</item>

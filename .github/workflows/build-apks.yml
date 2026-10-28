@@ -20,7 +20,7 @@ jobs:
     - name: Set up Gradle
       uses: gradle/actions/setup-gradle@v5
       with:
-        gradle-version: '8.2'
+        gradle-version: '8.7'
 
     # Release signing: if all four secrets exist they are used (KEYSTORE_FILE holds the
     # keystore as base64, e.g. `base64 -w0 release.jks`). Otherwise the build falls back
