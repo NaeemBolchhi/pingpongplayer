@@ -16,7 +16,7 @@ public class DeviceDiscovery {
         void onDevicesChanged(List<DeviceInfo> devices);
     }
 
-    private static final String SERVICE_TYPE = "_streamcast._tcp.";
+    private static final String SERVICE_TYPE = "_pingpong._tcp.";
 
     private final NsdManager nsd;
     private final Listener listener;
@@ -46,7 +46,7 @@ public class DeviceDiscovery {
             @Override
             public void onServiceFound(final NsdServiceInfo info) {
                 String type = info.getServiceType();
-                if (type != null && type.startsWith("_streamcast._tcp")) {
+                if (type != null && type.startsWith("_pingpong._tcp")) {
                     main.post(() -> {
                         queue.add(info);
                         resolveNext();

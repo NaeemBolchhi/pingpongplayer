@@ -1,2 +1,2 @@
-rootProject.name = "StreamCastPhone"
+rootProject.name = "Ping"
 include ':app'

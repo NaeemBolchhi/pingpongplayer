@@ -12,7 +12,7 @@ public class UsageStore {
     private final SharedPreferences prefs;
 
     public UsageStore(Context context) {
-        prefs = context.getSharedPreferences("StreamCastPrefs", Context.MODE_PRIVATE);
+        prefs = context.getSharedPreferences("PingPongPrefs", Context.MODE_PRIVATE);
     }
 
     public void record(String name) {

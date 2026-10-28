@@ -45,7 +45,7 @@ import java.util.List;
 import java.util.zip.GZIPInputStream;
 
 public class MainActivity extends FragmentActivity {
-    private static final String SERVICE_TYPE = "_streamcast._tcp.";
+    private static final String SERVICE_TYPE = "_pingpong._tcp.";
     private static final int CONTROL_PORT = 8888;
     private static final int SEEK_STEP_MS = 10000;
     private static final int SEEK_BAR_STEP_MS = 30000;
