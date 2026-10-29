@@ -10,150 +10,514 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <TextView
-        android:id="@+id/tv_idle"
+    <!-- loading -->
+    <LinearLayout
+        android:id="@+id/loading_overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:gravity="center"
-        android:padding="48dp"
-        android:textColor="#FFFFFF"
-        android:textSize="28sp" />
-
-    <LinearLayout
-        android:id="@+id/controls_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:background="#99000000"
-        android:orientation="vertical"
-        android:padding="24dp"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/tv_title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:singleLine="true"
-            android:textColor="#FFFFFF"
-            android:textSize="20sp" />
-
-        <SeekBar
-            android:id="@+id/seek_bar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:focusable="true"
-            android:max="1000" />
-
-        <TextView
-            android:id="@+id/tv_time"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="end"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btn_play_pause"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Play / Pause" />
-
-            <Button
-                android:id="@+id/btn_subtitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Subtitles" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- double-tap style seek feedback -->
-    <TextView
-        android:id="@+id/seek_left"
-        android:layout_width="140dp"
-        android:layout_height="140dp"
-        android:layout_gravity="start|center_vertical"
-        android:layout_marginStart="96dp"
-        android:background="@drawable/seek_bubble"
-        android:gravity="center"
-        android:textColor="#FFFFFF"
-        android:textSize="28sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
-
-    <TextView
-        android:id="@+id/seek_right"
-        android:layout_width="140dp"
-        android:layout_height="140dp"
-        android:layout_gravity="end|center_vertical"
-        android:layout_marginEnd="96dp"
-        android:background="@drawable/seek_bubble"
-        android:gravity="center"
-        android:textColor="#FFFFFF"
-        android:textSize="28sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
-
-    <!-- shown when a link fails to load -->
-    <LinearLayout
-        android:id="@+id/error_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#F2000000"
+        android:background="#0B0706"
         android:gravity="center"
         android:orientation="vertical"
-        android:padding="64dp"
         android:visibility="gone">
 
-        <ImageView
-            android:layout_width="96dp"
-            android:layout_height="96dp"
-            android:importantForAccessibility="no"
-            android:src="@drawable/ic_error" />
+        <ProgressBar
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:indeterminate="true"
+            android:indeterminateTint="#FF9A6B"
+            android:indeterminateTintMode="src_in" />
 
         <TextView
+            android:id="@+id/tv_loading_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="Couldn't play this video"
-            android:textColor="#FFFFFF"
-            android:textSize="36sp"
+            android:layout_marginStart="48dp"
+            android:layout_marginTop="20dp"
+            android:layout_marginEnd="48dp"
+            android:ellipsize="end"
+            android:maxWidth="600dp"
+            android:singleLine="true"
+            android:textColor="#FBEEE8"
+            android:textSize="22sp"
             android:textStyle="bold" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="6dp"
+            android:text="Loading…"
+            android:textColor="#CDB8AE"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+    <!-- seek feedback (double-tap style) -->
+    <View
+        android:id="@+id/seek_glow_left"
+        android:layout_width="700dp"
+        android:layout_height="780dp"
+        android:layout_gravity="start|center_vertical"
+        android:layout_marginStart="-350dp"
+        android:background="@drawable/seek_glow"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/seek_glow_right"
+        android:layout_width="700dp"
+        android:layout_height="780dp"
+        android:layout_gravity="end|center_vertical"
+        android:layout_marginEnd="-350dp"
+        android:background="@drawable/seek_glow"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/seek_left"
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:layout_gravity="start|center_vertical"
+        android:layout_marginStart="125dp"
+        android:background="@drawable/seek_bubble"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/seek_right"
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:layout_gravity="end|center_vertical"
+        android:layout_marginEnd="125dp"
+        android:background="@drawable/seek_bubble"
+        android:gravity="center"
+        android:textColor="#FFFFFF"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <!-- player menu -->
+    <FrameLayout
+        android:id="@+id/controls_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="140dp"
+            android:layout_gravity="top"
+            android:background="@drawable/scrim_top" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="160dp"
+            android:layout_gravity="bottom"
+            android:background="@drawable/scrim_bottom" />
+
+        <LinearLayout
+            android:id="@+id/top_bar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_marginStart="36dp"
+            android:layout_marginTop="28dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/btn_back_nav"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/btn_icon_bg"
+                android:contentDescription="Back"
+                android:focusable="true"
+                android:nextFocusDown="@id/seek_bar"
+                android:nextFocusLeft="@id/btn_back_nav"
+                android:nextFocusRight="@id/btn_back_nav"
+                android:nextFocusUp="@id/btn_back_nav"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_arrow_back" />
+
+            <TextView
+                android:id="@+id/tv_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:ellipsize="end"
+                android:maxWidth="550dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="32dp"
+            android:layout_marginEnd="48dp"
+            android:gravity="end"
+            android:orientation="vertical">
+
+            <TextClock
+                android:id="@+id/clock_time"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:format12Hour="h:mm a"
+                android:format24Hour="HH:mm"
+                android:textColor="#FFFFFF"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextClock
+                android:id="@+id/clock_date"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:format12Hour="EEE, d MMMM"
+                android:format24Hour="EEE, d MMMM"
+                android:textColor="#D9FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/bottom_bar"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_gravity="bottom"
+            android:layout_marginStart="36dp"
+            android:layout_marginEnd="36dp"
+            android:layout_marginBottom="28dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/btn_back10"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/btn_icon_bg"
+                android:contentDescription="Back 10 seconds"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btn_back10"
+                android:nextFocusRight="@id/btn_play_pause"
+                android:nextFocusUp="@id/seek_bar"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_replay10" />
+
+            <ImageButton
+                android:id="@+id/btn_play_pause"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/btn_icon_bg"
+                android:contentDescription="Play or pause"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btn_back10"
+                android:nextFocusRight="@id/btn_fwd10"
+                android:nextFocusUp="@id/seek_bar"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_pause" />
+
+            <ImageButton
+                android:id="@+id/btn_fwd10"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/btn_icon_bg"
+                android:contentDescription="Forward 10 seconds"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btn_play_pause"
+                android:nextFocusRight="@id/btn_subtitle"
+                android:nextFocusUp="@id/seek_bar"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_forward10" />
+
+            <SeekBar
+                android:id="@+id/seek_bar"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_weight="1"
+                android:focusable="true"
+                android:max="1000"
+                android:maxHeight="34dp"
+                android:minHeight="34dp"
+                android:nextFocusDown="@id/btn_play_pause"
+                android:nextFocusUp="@id/btn_back_nav"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:progressDrawable="@drawable/seek_progress"
+                android:splitTrack="false"
+                android:thumb="@drawable/seek_thumb"
+                android:thumbOffset="0dp" />
+
+            <TextView
+                android:id="@+id/tv_time"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:singleLine="true"
+                android:textColor="#E6FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/btn_subtitle"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/btn_icon_bg"
+                android:contentDescription="Subtitles"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btn_fwd10"
+                android:nextFocusRight="@id/btn_subtitle"
+                android:nextFocusUp="@id/seek_bar"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_subtitles" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- ready screen -->
+    <LinearLayout
+        android:id="@+id/idle_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_idle"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <FrameLayout
+            android:layout_width="240dp"
+            android:layout_height="240dp">
+
+            <View
+                android:layout_width="240dp"
+                android:layout_height="240dp"
+                android:layout_gravity="center"
+                android:background="@drawable/ring_outer" />
+
+            <View
+                android:layout_width="180dp"
+                android:layout_height="180dp"
+                android:layout_gravity="center"
+                android:background="@drawable/ring_mid" />
+
+            <View
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:layout_gravity="center"
+                android:background="@drawable/ring_inner" />
+
+            <View
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_gravity="center"
+                android:background="@drawable/ball" />
+        </FrameLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pong!"
+            android:textColor="#FBEEE8"
+            android:textSize="54sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="48dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginEnd="48dp"
             android:gravity="center"
-            android:text="Nothing loaded after 30 seconds. Check that the link works, then send it again."
-            android:textColor="#CCFFFFFF"
-            android:textSize="24sp" />
+            android:text="Share a link to Ping! on your phone to start playing."
+            android:textColor="#CDB8AE"
+            android:textSize="18sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/chip_bg"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp">
+
+            <View
+                android:layout_width="7dp"
+                android:layout_height="7dp"
+                android:background="@drawable/dot_ready" />
+
+            <TextView
+                android:id="@+id/tv_idle_chip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:singleLine="true"
+                android:textColor="#FBEEE8"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- couldn't play -->
+    <LinearLayout
+        android:id="@+id/error_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_error"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <FrameLayout
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/error_circle">
+
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_error" />
+        </FrameLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Couldn't play this video"
+            android:textColor="#FBEEE8"
+            android:textSize="32sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="48dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="48dp"
+            android:gravity="center"
+            android:maxWidth="480dp"
+            android:text="Nothing loaded. Check that the link works, then send it again."
+            android:textColor="#CDB8AE"
+            android:textSize="17sp" />
 
         <TextView
             android:id="@+id/tv_error_url"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginStart="48dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginEnd="48dp"
+            android:background="@drawable/chip_bg"
             android:ellipsize="middle"
             android:fontFamily="monospace"
-            android:gravity="center"
-            android:maxLines="2"
-            android:textColor="#99FFFFFF"
-            android:textSize="18sp" />
+            android:maxLines="1"
+            android:maxWidth="550dp"
+            android:paddingStart="14dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="8dp"
+            android:textColor="#CDB8AE"
+            android:textSize="13sp" />
 
         <Button
             android:id="@+id/btn_error_ok"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="32dp"
+            android:layout_width="120dp"
+            android:layout_height="44dp"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/btn_dialog_bg"
             android:focusable="true"
-            android:minWidth="160dp"
-            android:text="OK" />
+            android:stateListAnimator="@null"
+            android:text="OK"
+            android:textColor="@color/btn_dialog_text"
+            android:textSize="17sp"
+            android:textStyle="bold" />
     </LinearLayout>
+
+    <!-- confirm stop -->
+    <FrameLayout
+        android:id="@+id/confirm_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#B8080504"
+        android:clickable="true"
+        android:focusable="false"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="480dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/dialog_card"
+            android:orientation="vertical"
+            android:padding="32dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Stop playing?"
+                android:textColor="#FFFFFF"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="The video will stop and this session will end."
+                android:textColor="#CDB8AE"
+                android:textSize="16sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_confirm_keep"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:background="@drawable/btn_dialog_bg"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:nextFocusRight="@id/btn_confirm_stop"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:stateListAnimator="@null"
+                    android:text="Keep watching"
+                    android:textColor="@color/btn_dialog_text"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btn_confirm_stop"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="12dp"
+                    android:background="@drawable/btn_dialog_bg"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:nextFocusLeft="@id/btn_confirm_keep"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:stateListAnimator="@null"
+                    android:text="Stop"
+                    android:textColor="@color/btn_dialog_text"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
 
 </FrameLayout>

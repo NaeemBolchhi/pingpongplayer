@@ -11,9 +11,14 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.graphics.Rect;
+import android.view.GestureDetector;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.WindowManager;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -55,15 +60,21 @@ public class MainActivity extends FragmentActivity {
     private VLCVideoLayout videoLayout;
     private LibVLC libVLC;
     private MediaPlayer mediaPlayer;
-    private LinearLayout controlsOverlay;
+    private View controlsOverlay;
     private SeekBar seekBar;
-    private TextView tvTime, tvIdle, tvTitle;
-    private Button btnPlayPause, btnSubtitle, btnErrorOk;
+    private TextView tvTime, tvIdleChip, tvTitle, tvLoadingTitle;
+    private View idleContainer, loadingOverlay, confirmOverlay, topBar, bottomBar, seekGlowLeft, seekGlowRight;
+    private ImageButton btnPlayPause, btnSubtitle, btnBackNav, btnBack10, btnFwd10;
+    private Button btnErrorOk, btnConfirmKeep, btnConfirmStop;
+    private volatile boolean confirmShown = false;
     private View errorOverlay;
     private TextView tvErrorUrl;
     private volatile boolean errorShown = false;
     private boolean loaded = false;
     private TextView seekLeft, seekRight;
+    private GestureDetector gestures;
+    private long multiTapUntil;
+    private boolean swallowTouch;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean controlsVisible = false;
     private boolean viewsAttached = false;
@@ -104,11 +115,30 @@ public class MainActivity extends FragmentActivity {
         controlsOverlay = findViewById(R.id.controls_overlay);
         seekBar = findViewById(R.id.seek_bar);
         tvTime = findViewById(R.id.tv_time);
-        tvIdle = findViewById(R.id.tv_idle);
+        idleContainer = findViewById(R.id.idle_container);
+        tvIdleChip = findViewById(R.id.tv_idle_chip);
+        loadingOverlay = findViewById(R.id.loading_overlay);
+        tvLoadingTitle = findViewById(R.id.tv_loading_title);
+        confirmOverlay = findViewById(R.id.confirm_overlay);
+        topBar = findViewById(R.id.top_bar);
+        bottomBar = findViewById(R.id.bottom_bar);
+        seekGlowLeft = findViewById(R.id.seek_glow_left);
+        seekGlowRight = findViewById(R.id.seek_glow_right);
+        btnBackNav = findViewById(R.id.btn_back_nav);
+        btnBack10 = findViewById(R.id.btn_back10);
+        btnFwd10 = findViewById(R.id.btn_fwd10);
+        btnConfirmKeep = findViewById(R.id.btn_confirm_keep);
+        btnConfirmStop = findViewById(R.id.btn_confirm_stop);
         tvTitle = findViewById(R.id.tv_title);
         btnPlayPause = findViewById(R.id.btn_play_pause);
         btnSubtitle = findViewById(R.id.btn_subtitle);
 
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(lp);
+        }
+        setupTouch();
         seekLeft = findViewById(R.id.seek_left);
         seekRight = findViewById(R.id.seek_right);
         errorOverlay = findViewById(R.id.error_overlay);
@@ -130,10 +160,127 @@ public class MainActivity extends FragmentActivity {
             toggleSubtitles();
             showControls();
         });
+        btnBack10.setOnClickListener(v -> {
+            seekBy(-SEEK_STEP_MS);
+            showControls();
+        });
+        btnFwd10.setOnClickListener(v -> {
+            seekBy(SEEK_STEP_MS);
+            showControls();
+        });
+        btnBackNav.setOnClickListener(v -> showConfirm());
+        btnConfirmKeep.setOnClickListener(v -> dismissConfirm());
+        btnConfirmStop.setOnClickListener(v -> {
+            dismissConfirm();
+            endSession();
+        });
 
         handler.postDelayed(updateUiRunnable, 500);
         registerService();
         startUdpServer();
+    }
+
+    // ----------------------------------------------- touch (phones / tablets used as TV boxes)
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
+    }
+
+    /** True when a touch belongs to a dialog or to the menu's top/bottom bars rather than the video. */
+    private boolean insideOverlay(MotionEvent e) {
+        if (confirmShown || errorShown) return true;
+        if (!controlsVisible) return false;
+        Rect r = new Rect();
+        topBar.getHitRect(r);
+        if (r.contains((int) e.getX(), (int) e.getY())) return true;
+        bottomBar.getHitRect(r);
+        return r.contains((int) e.getX(), (int) e.getY());
+    }
+
+    private void setupTouch() {
+        gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDown(MotionEvent e) {
+                return true;
+            }
+
+            @Override
+            public boolean onSingleTapConfirmed(MotionEvent e) {
+                if (currentUrl == null || insideOverlay(e)) return false;
+                if (controlsVisible) hideControls();
+                else showControls();
+                return true;
+            }
+
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                if (currentUrl == null || insideOverlay(e)) return false;
+                float w = getWindow().getDecorView().getWidth();
+                if (e.getX() < w / 3f) {
+                    seekWithFeedback(-SEEK_STEP_MS);
+                    multiTapUntil = SystemClock.uptimeMillis() + 450;
+                } else if (e.getX() > w * 2f / 3f) {
+                    seekWithFeedback(SEEK_STEP_MS);
+                    multiTapUntil = SystemClock.uptimeMillis() + 450;
+                } else {
+                    togglePlayPause();
+                }
+                return true;
+            }
+        });
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (!fromUser || mediaPlayer == null) return;
+                long len = mediaPlayer.getLength();
+                if (len > 0) tvTime.setText(formatTime(len * progress / 1000) + " / " + formatTime(len));
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+                handler.removeCallbacks(hideControlsRunnable);
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                if (mediaPlayer != null) {
+                    long len = mediaPlayer.getLength();
+                    if (len > 0) seekTo(len * bar.getProgress() / 1000, len);
+                }
+                showControls();
+            }
+        });
+    }
+
+    /** Taps: show/hide the menu. Double tap left/right: seek 10s (keep tapping to keep seeking). */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent e) {
+        int a = e.getActionMasked();
+        if (a == MotionEvent.ACTION_DOWN) {
+            swallowTouch = false;
+            if (!errorShown && currentUrl != null && !insideOverlay(e)
+                    && SystemClock.uptimeMillis() < multiTapUntil) {
+                float w = getWindow().getDecorView().getWidth();
+                if (e.getX() < w / 3f || e.getX() > w * 2f / 3f) {
+                    seekWithFeedback(e.getX() < w / 3f ? -SEEK_STEP_MS : SEEK_STEP_MS);
+                    multiTapUntil = SystemClock.uptimeMillis() + 450;
+                    swallowTouch = true;
+                    return true;
+                }
+            }
+        } else if (swallowTouch) {
+            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) swallowTouch = false;
+            return true;
+        }
+        if (gestures != null) gestures.onTouchEvent(e);
+        return super.dispatchTouchEvent(e);
     }
 
     @Override
@@ -234,6 +381,8 @@ public class MainActivity extends FragmentActivity {
             int t = event.type;
             if (t == MediaPlayer.Event.EncounteredError) {
                 if (currentUrl != null) showError();
+            } else if (t == MediaPlayer.Event.Playing) {
+                hideLoading();
             } else if (t == MediaPlayer.Event.TimeChanged || t == MediaPlayer.Event.LengthChanged
                     || t == MediaPlayer.Event.Vout) {
                 try {
@@ -241,6 +390,7 @@ public class MainActivity extends FragmentActivity {
                             || t == MediaPlayer.Event.Vout)) {
                         loaded = true;
                         handler.removeCallbacks(loadTimeout);
+                        hideLoading();
                     }
                 } catch (Exception ignored) {
                 }
@@ -264,7 +414,8 @@ public class MainActivity extends FragmentActivity {
         } catch (Exception ignored) {
         }
         hideControls();
-        tvIdle.setVisibility(View.GONE);
+        hideLoading();
+        idleContainer.setVisibility(View.GONE);
         tvErrorUrl.setText(currentUrl == null ? "" : currentUrl);
         errorOverlay.setVisibility(View.VISIBLE);
         btnErrorOk.requestFocus();
@@ -277,17 +428,54 @@ public class MainActivity extends FragmentActivity {
 
     /** OK on the error screen: forget the failed link and go back to the idle screen. */
     private void dismissError() {
+        endSession();
+    }
+
+    /** Stops playback, forgets the current link and returns to the ready screen. */
+    private void endSession() {
         hideError();
         handler.removeCallbacks(loadTimeout);
+        try {
+            if (mediaPlayer != null) mediaPlayer.stop();
+        } catch (Exception ignored) {
+        }
         currentUrl = null;
         currentTitle = "";
         subtitleFiles.clear();
-        tvIdle.setVisibility(View.VISIBLE);
+        hideLoading();
+        hideControls();
+        idleContainer.setVisibility(View.VISIBLE);
+    }
+
+    private void showLoading() {
+        tvLoadingTitle.setText(currentTitle);
+        loadingOverlay.setVisibility(View.VISIBLE);
+    }
+
+    private void hideLoading() {
+        loadingOverlay.setVisibility(View.GONE);
+    }
+
+    private void showConfirm() {
+        if (currentUrl == null || errorShown) return;
+        confirmShown = true;
+        hideControls();
+        confirmOverlay.setVisibility(View.VISIBLE);
+        btnConfirmKeep.requestFocus();
+    }
+
+    private void dismissConfirm() {
+        confirmShown = false;
+        confirmOverlay.setVisibility(View.GONE);
+    }
+
+    private void updatePlayIcon(boolean playing) {
+        btnPlayPause.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
+        btnPlayPause.setContentDescription(playing ? "Pause" : "Play");
     }
 
     private void updateIdleText() {
-        tvIdle.setText("Pong! is ready as \"" + serviceName
-                + "\"\n\nShare a link to Ping! on your phone to start playing.");
+        tvIdleChip.setText("Ready as " + serviceName);
     }
 
     private void renameDevice(String raw) {
@@ -333,7 +521,8 @@ public class MainActivity extends FragmentActivity {
                     }
                 }, 800);
             }
-            tvIdle.setVisibility(View.GONE);
+            idleContainer.setVisibility(View.GONE);
+            if (play) showLoading();
             hideControls();
         } catch (Exception e) {
             Toast.makeText(this, "Cannot play: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -351,8 +540,10 @@ public class MainActivity extends FragmentActivity {
 
     private void togglePlayPause() {
         if (mediaPlayer == null) return;
-        if (mediaPlayer.isPlaying()) mediaPlayer.pause();
+        boolean wasPlaying = mediaPlayer.isPlaying();
+        if (wasPlaying) mediaPlayer.pause();
         else mediaPlayer.play();
+        updatePlayIcon(!wasPlaying);
     }
 
     private long seekTarget, lastSeekAt;
@@ -371,7 +562,9 @@ public class MainActivity extends FragmentActivity {
         TextView show = feedbackTotal < 0 ? seekLeft : seekRight;
         TextView other = feedbackTotal < 0 ? seekRight : seekLeft;
         other.setVisibility(View.GONE);
-        show.setText((feedbackTotal < 0 ? "\u23EA\n" : "\u23E9\n") + label);
+        (feedbackTotal < 0 ? seekGlowRight : seekGlowLeft).setVisibility(View.GONE);
+        (feedbackTotal < 0 ? seekGlowLeft : seekGlowRight).setVisibility(View.VISIBLE);
+        show.setText(label);
         show.setVisibility(View.VISIBLE);
         handler.removeCallbacks(hideFeedback);
         handler.postDelayed(hideFeedback, 800);
@@ -382,6 +575,8 @@ public class MainActivity extends FragmentActivity {
         public void run() {
             seekLeft.setVisibility(View.GONE);
             seekRight.setVisibility(View.GONE);
+            seekGlowLeft.setVisibility(View.GONE);
+            seekGlowRight.setVisibility(View.GONE);
             feedbackTotal = 0;
         }
     };
@@ -510,6 +705,7 @@ public class MainActivity extends FragmentActivity {
                     if (len > 0) seekBar.setProgress((int) (t * 1000 / len));
                     tvTime.setText(formatTime(t) + " / " + (len > 0 ? formatTime(len) : "--:--"));
                     tvTitle.setText(currentTitle);
+                    updatePlayIcon(mediaPlayer.isPlaying());
                 }
             } catch (Exception ignored) {
             }
@@ -525,8 +721,11 @@ public class MainActivity extends FragmentActivity {
 
     private void showControls() {
         if (currentUrl == null) return;
+        if (confirmShown || errorShown) return;
         controlsOverlay.setVisibility(View.VISIBLE);
         controlsVisible = true;
+        tvTitle.setText(currentTitle);
+        if (mediaPlayer != null) updatePlayIcon(mediaPlayer.isPlaying());
         View f = getCurrentFocus();
         if (f == null || f.getParent() == null) seekBar.requestFocus();
         handler.removeCallbacks(hideControlsRunnable);
@@ -550,7 +749,7 @@ public class MainActivity extends FragmentActivity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int k = event.getKeyCode();
-        if (event.getAction() == KeyEvent.ACTION_DOWN && !errorShown && currentUrl != null
+        if (event.getAction() == KeyEvent.ACTION_DOWN && !errorShown && !confirmShown && currentUrl != null
                 && (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             int dir = k == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1;
             long now = SystemClock.uptimeMillis();
@@ -577,7 +776,16 @@ public class MainActivity extends FragmentActivity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         View focus = getCurrentFocus();
-        boolean onButton = controlsVisible && (focus == btnPlayPause || focus == btnSubtitle);
+        boolean onButton = controlsVisible && focus != null && (focus == btnPlayPause || focus == btnSubtitle
+                || focus == btnBackNav || focus == btnBack10 || focus == btnFwd10 || focus == seekBar);
+
+        if (confirmShown) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                dismissConfirm();
+                return true;
+            }
+            return super.onKeyDown(keyCode, event); // focus moves between the two buttons
+        }
 
         if (errorShown) {
             if (keyCode == KeyEvent.KEYCODE_BACK) {
@@ -623,6 +831,9 @@ public class MainActivity extends FragmentActivity {
                 hideControls();
                 return true;
             }
+            if (focus == seekBar && (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) {
+                togglePlayPause();
+            }
             // let the system move focus between buttons; keep the overlay alive
             handler.removeCallbacks(hideControlsRunnable);
             handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS);
@@ -644,11 +855,14 @@ public class MainActivity extends FragmentActivity {
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_DPAD_DOWN:
                 showControls();
-                if (controlsVisible) btnPlayPause.requestFocus();
                 return true;
             case KeyEvent.KEYCODE_BACK:
                 if (controlsVisible) {
                     hideControls();
+                    return true;
+                }
+                if (currentUrl != null) {
+                    showConfirm();
                     return true;
                 }
                 break;
