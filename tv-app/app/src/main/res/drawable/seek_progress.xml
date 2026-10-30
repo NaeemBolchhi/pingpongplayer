@@ -3,6 +3,8 @@
     <item
         android:id="@android:id/background"
         android:bottom="15dp"
+        android:left="17dp"
+        android:right="17dp"
         android:top="15dp">
         <shape android:shape="rectangle">
             <solid android:color="#4DFFFFFF" />
@@ -12,6 +14,8 @@
     <item
         android:id="@android:id/progress"
         android:bottom="15dp"
+        android:left="17dp"
+        android:right="17dp"
         android:top="15dp">
         <clip>
             <shape android:shape="rectangle">
