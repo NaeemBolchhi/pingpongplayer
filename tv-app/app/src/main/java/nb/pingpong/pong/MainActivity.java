@@ -70,7 +70,7 @@ public class MainActivity extends FragmentActivity {
     private Button btnErrorOk, btnConfirmKeep, btnConfirmStop;
     private volatile boolean confirmShown = false;
     private View errorOverlay;
-    private TextView tvErrorUrl;
+    private TextView tvErrorUrl, tvErrorDetail;
     private volatile boolean errorShown = false;
     private boolean loaded = false;
     /** 0 = normal settings, 1 = HLS fallback settings (tried automatically once before showing the error). */
@@ -151,6 +151,7 @@ public class MainActivity extends FragmentActivity {
         seekRight = findViewById(R.id.seek_right);
         errorOverlay = findViewById(R.id.error_overlay);
         tvErrorUrl = findViewById(R.id.tv_error_url);
+        tvErrorDetail = findViewById(R.id.tv_error_detail);
         btnErrorOk = findViewById(R.id.btn_error_ok);
         btnErrorOk.setOnClickListener(v -> dismissError());
 
@@ -433,8 +434,32 @@ public class MainActivity extends FragmentActivity {
         hideLoading();
         idleContainer.setVisibility(View.GONE);
         tvErrorUrl.setText(currentUrl == null ? "" : currentUrl);
+        tvErrorDetail.setVisibility(View.GONE);
+        if (currentUrl != null && currentUrl.startsWith("http")) {
+            // find out why, in the background, and show it under the link
+            final String failed = currentUrl;
+            final String clean = failed.contains("|") ? failed.substring(0, failed.indexOf('|')) : failed;
+            new Thread(() -> {
+                String why = StreamProbe.run(clean, USER_AGENT, probeReferer(clean));
+                runOnUiThread(() -> {
+                    if (errorShown && failed.equals(currentUrl) && !why.isEmpty()) {
+                        tvErrorDetail.setText(why);
+                        tvErrorDetail.setVisibility(View.VISIBLE);
+                    }
+                });
+            }, "probe").start();
+        }
         errorOverlay.setVisibility(View.VISIBLE);
         btnErrorOk.requestFocus();
+    }
+
+    private static String probeReferer(String url) {
+        try {
+            Uri u = Uri.parse(url);
+            return u.getScheme() + "://" + u.getHost() + (u.getPort() > 0 ? ":" + u.getPort() : "") + "/";
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void hideError() {

@@ -440,6 +440,19 @@
             android:textColor="#CDB8AE"
             android:textSize="13sp" />
 
+        <TextView
+            android:id="@+id/tv_error_detail"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="48dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="48dp"
+            android:gravity="center"
+            android:maxWidth="520dp"
+            android:textColor="#FFB4AB"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/btn_error_ok"
             android:layout_width="120dp"
