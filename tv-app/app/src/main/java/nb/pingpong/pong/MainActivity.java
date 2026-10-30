@@ -20,6 +20,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -69,6 +70,14 @@ public class MainActivity extends FragmentActivity {
     private ImageButton btnPlayPause, btnBackNav, btnBack10, btnFwd10;
     private Button btnErrorOk, btnConfirmKeep, btnConfirmStop;
     private volatile boolean confirmShown = false;
+    // update prompt
+    private View updateOverlay;
+    private TextView tvUpdateMsg, tvUpdateStatus;
+    private ProgressBar updateBar;
+    private Button btnUpdateNow, btnUpdateLater, btnUpdateNever;
+    private volatile boolean updateShown = false;
+    private boolean updating = false;
+    private UpdateChecker.Update pendingUpdate;
     private View errorOverlay;
     private TextView tvErrorUrl, tvErrorDetail;
     private volatile boolean errorShown = false;
@@ -129,6 +138,13 @@ public class MainActivity extends FragmentActivity {
         loadingOverlay = findViewById(R.id.loading_overlay);
         tvLoadingTitle = findViewById(R.id.tv_loading_title);
         confirmOverlay = findViewById(R.id.confirm_overlay);
+        updateOverlay = findViewById(R.id.update_overlay);
+        tvUpdateMsg = findViewById(R.id.tv_update_msg);
+        tvUpdateStatus = findViewById(R.id.tv_update_status);
+        updateBar = findViewById(R.id.update_bar);
+        btnUpdateNow = findViewById(R.id.btn_update_now);
+        btnUpdateLater = findViewById(R.id.btn_update_later);
+        btnUpdateNever = findViewById(R.id.btn_update_never);
         topBar = findViewById(R.id.top_bar);
         bottomBar = findViewById(R.id.bottom_bar);
         seekGlowLeft = findViewById(R.id.seek_glow_left);
@@ -180,6 +196,14 @@ public class MainActivity extends FragmentActivity {
             endSession();
         });
 
+        btnUpdateNow.setOnClickListener(v -> startUpdate());
+        btnUpdateLater.setOnClickListener(v -> hideUpdate());
+        btnUpdateNever.setOnClickListener(v -> {
+            UpdateChecker.neverShowAgain(this);
+            hideUpdate();
+        });
+        checkForUpdate();
+
         handler.postDelayed(updateUiRunnable, 500);
         registerService();
         startUdpServer();
@@ -200,7 +224,7 @@ public class MainActivity extends FragmentActivity {
 
     /** True when a touch belongs to a dialog or to the menu's top/bottom bars rather than the video. */
     private boolean insideOverlay(MotionEvent e) {
-        if (confirmShown || errorShown) return true;
+        if (confirmShown || errorShown || updateShown) return true;
         if (!controlsVisible) return false;
         Rect r = new Rect();
         topBar.getHitRect(r);
@@ -486,6 +510,103 @@ public class MainActivity extends FragmentActivity {
         hideLoading();
         hideControls();
         idleContainer.setVisibility(View.VISIBLE);
+        maybeShowUpdate();
+    }
+
+    // ------------------------------------------------------------ updates
+
+    /** Background check against the GitHub releases of the repo that built this app. */
+    private void checkForUpdate() {
+        if (!UpdateChecker.enabled(this) || !UpdateChecker.due(this)) return;
+        new Thread(() -> {
+            try {
+                final UpdateChecker.Update u = UpdateChecker.check(this);
+                if (u == null) {
+                    UpdateChecker.markChecked(this);
+                    return;
+                }
+                runOnUiThread(() -> {
+                    pendingUpdate = u;
+                    maybeShowUpdate();
+                });
+            } catch (Exception ignored) {
+                // offline or GitHub unreachable: try again next launch
+            }
+        }, "update-check").start();
+    }
+
+    /** The prompt only appears on the idle screen, never over a video. */
+    private void maybeShowUpdate() {
+        if (pendingUpdate == null || updateShown || currentUrl != null || confirmShown || errorShown) return;
+        String size = UpdateLogic.humanSize(pendingUpdate.size);
+        tvUpdateMsg.setText("Pong! " + pendingUpdate.version + " is available (you have " + BuildConfig.VERSION_NAME
+                + ")." + (size.isEmpty() ? "" : "\nDownload size: " + size));
+        updateBar.setVisibility(View.GONE);
+        tvUpdateStatus.setVisibility(View.GONE);
+        btnUpdateNow.setEnabled(true);
+        btnUpdateLater.setEnabled(true);
+        btnUpdateNever.setEnabled(true);
+        updateShown = true;
+        updateOverlay.setVisibility(View.VISIBLE);
+        btnUpdateNow.requestFocus();
+    }
+
+    private void hideUpdate() {
+        updateShown = false;
+        updating = false;
+        pendingUpdate = null;
+        updateOverlay.setVisibility(View.GONE);
+    }
+
+    private void startUpdate() {
+        final UpdateChecker.Update u = pendingUpdate;
+        if (u == null || updating) return;
+        updating = true;
+        btnUpdateNow.setEnabled(false);
+        btnUpdateLater.setEnabled(false);
+        btnUpdateNever.setEnabled(false);
+        updateBar.setVisibility(View.VISIBLE);
+        updateBar.setIndeterminate(true);
+        tvUpdateStatus.setTextColor(0xFFCDB8AE);
+        tvUpdateStatus.setVisibility(View.VISIBLE);
+        tvUpdateStatus.setText("Downloading…");
+        new Thread(() -> {
+            try {
+                final java.io.File apk = UpdateChecker.download(this, u, (done, total) -> runOnUiThread(() -> {
+                    if (total > 0) {
+                        updateBar.setIndeterminate(false);
+                        updateBar.setMax(100);
+                        updateBar.setProgress((int) (done * 100 / total));
+                        tvUpdateStatus.setText("Downloading… " + (done * 100 / total) + "%");
+                    }
+                }));
+                runOnUiThread(() -> {
+                    UpdateChecker.InstallResult r = UpdateChecker.install(this, apk);
+                    if (r == UpdateChecker.InstallResult.STARTED) {
+                        hideUpdate();
+                    } else {
+                        updateFailed(r == UpdateChecker.InstallResult.NEEDS_PERMISSION
+                                ? "Allow Pong! to install apps (Settings > Apps > Special access > Install unknown apps), then press Update again."
+                                : "Couldn't start the installer.");
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> updateFailed("Download failed: "
+                        + (e.getMessage() == null ? "unknown error" : e.getMessage())));
+            }
+        }, "update-download").start();
+    }
+
+    private void updateFailed(String text) {
+        updating = false;
+        updateBar.setVisibility(View.GONE);
+        tvUpdateStatus.setTextColor(0xFFFFB4AB);
+        tvUpdateStatus.setText(text);
+        tvUpdateStatus.setVisibility(View.VISIBLE);
+        btnUpdateNow.setEnabled(true);
+        btnUpdateLater.setEnabled(true);
+        btnUpdateNever.setEnabled(true);
+        btnUpdateNow.requestFocus();
     }
 
     private void showLoading() {
@@ -536,6 +657,7 @@ public class MainActivity extends FragmentActivity {
     }
 
     private void playMedia(String url) {
+        if (updateShown && !updating) hideUpdate();
         subtitleFiles.clear();
         currentUrl = url;
         currentTitle = titleFromUrl(url);
@@ -825,7 +947,7 @@ public class MainActivity extends FragmentActivity {
     /** @param focusPlay put focus on the play/pause button (used right after play/pause with the menu hidden) */
     private void showControls(boolean focusPlay) {
         if (currentUrl == null) return;
-        if (confirmShown || errorShown) return;
+        if (confirmShown || errorShown || updateShown) return;
         controlsOverlay.setVisibility(View.VISIBLE);
         controlsVisible = true;
         tvTitle.setText(currentTitle);
@@ -854,7 +976,7 @@ public class MainActivity extends FragmentActivity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int k = event.getKeyCode();
-        if (event.getAction() == KeyEvent.ACTION_DOWN && !errorShown && !confirmShown && currentUrl != null
+        if (event.getAction() == KeyEvent.ACTION_DOWN && !errorShown && !confirmShown && !updateShown && currentUrl != null
                 && (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             int dir = k == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1;
             long now = SystemClock.uptimeMillis();
@@ -883,6 +1005,14 @@ public class MainActivity extends FragmentActivity {
         View focus = getCurrentFocus();
         boolean onButton = controlsVisible && focus != null && (focus == btnPlayPause
                 || focus == btnBackNav || focus == btnBack10 || focus == btnFwd10 || focus == seekBar);
+
+        if (updateShown) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                if (!updating) hideUpdate();
+                return true;
+            }
+            return super.onKeyDown(keyCode, event); // focus moves between the three buttons
+        }
 
         if (confirmShown) {
             if (keyCode == KeyEvent.KEYCODE_BACK) {

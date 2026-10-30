@@ -14,8 +14,14 @@ android {
         applicationId "nb.pingpong.ping"
         minSdk 21
         targetSdk 34
-        versionCode 1
+        versionCode (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
         versionName "1.0.0"
+        // the repository that built the app (set by GitHub Actions; empty for local builds, which turns update checks off)
+        buildConfigField "String", "UPDATE_REPO", "\"${System.getenv('GITHUB_REPOSITORY') ?: ''}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     // one APK per ABI plus a universal APK

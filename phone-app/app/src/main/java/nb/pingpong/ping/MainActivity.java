@@ -62,6 +62,7 @@ public class MainActivity extends AppCompatActivity {
         list.setAdapter(adapter);
 
         discovery = new DeviceDiscovery(this, this::onDevicesChanged);
+        UpdateDialog.checkOnce(this);
     }
 
     @Override

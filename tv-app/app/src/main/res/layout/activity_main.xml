@@ -543,4 +543,118 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- update available -->
+    <FrameLayout
+        android:id="@+id/update_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#B8080504"
+        android:clickable="true"
+        android:focusable="false"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="560dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/dialog_card"
+            android:orientation="vertical"
+            android:padding="32dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Update available"
+                android:textColor="#FFFFFF"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_update_msg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="#CDB8AE"
+                android:textSize="16sp" />
+
+            <ProgressBar
+                android:id="@+id/update_bar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="6dp"
+                android:layout_marginTop="20dp"
+                android:progressBackgroundTint="#33FFFFFF"
+                android:progressTint="#FF9A6B"
+                android:indeterminateTint="#FF9A6B"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tv_update_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="#FFB4AB"
+                android:textSize="15sp"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="28dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_update_now"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:background="@drawable/btn_dialog_bg"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:nextFocusRight="@id/btn_update_later"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:stateListAnimator="@null"
+                    android:text="Update"
+                    android:textColor="@color/btn_dialog_text"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btn_update_later"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="12dp"
+                    android:background="@drawable/btn_dialog_bg"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:nextFocusLeft="@id/btn_update_now"
+                    android:nextFocusRight="@id/btn_update_never"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:stateListAnimator="@null"
+                    android:text="Not now"
+                    android:textColor="@color/btn_dialog_text"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btn_update_never"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="12dp"
+                    android:background="@drawable/btn_dialog_bg"
+                    android:focusable="true"
+                    android:minWidth="0dp"
+                    android:nextFocusLeft="@id/btn_update_later"
+                    android:paddingStart="24dp"
+                    android:paddingEnd="24dp"
+                    android:stateListAnimator="@null"
+                    android:text="Never show again"
+                    android:textColor="@color/btn_dialog_text"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+
 </FrameLayout>
