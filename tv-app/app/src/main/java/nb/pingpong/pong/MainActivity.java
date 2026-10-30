@@ -36,10 +36,8 @@ import org.videolan.libvlc.MediaPlayer;
 import org.videolan.libvlc.util.VLCVideoLayout;
 
 import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
@@ -659,26 +657,13 @@ public class MainActivity extends FragmentActivity {
                         if (p.endsWith(e)) ext = e;
                     }
                 }
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) > 0) {
-                    bos.write(buf, 0, n);
-                    if (bos.size() > 16 * 1024 * 1024) throw new IOException("Subtitle file too large");
-                }
-                in.close();
-                byte[] data = bos.toByteArray();
-
-                // ASS / SSA / WebVTT / TTML -> SRT. Null means "use the original file unchanged".
-                byte[] srt = SubtitleConverter.toSrt(data);
-                if (srt != null) {
-                    data = srt;
-                    ext = ".srt";
-                }
                 final File f = new File(getCacheDir(), "sub_" + System.currentTimeMillis() + ext);
                 try (OutputStream out = new FileOutputStream(f)) {
-                    out.write(data);
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
                 }
+                in.close();
                 runOnUiThread(() -> {
                     addSubtitleFile(f, true);
                     Toast.makeText(this, "Subtitles loaded", Toast.LENGTH_SHORT).show();
