@@ -70,13 +70,13 @@ jobs:
     - name: Upload Pong-TV zip
       uses: actions/upload-artifact@v6
       with:
-        name: Pong-TV-${{ steps.version.outputs.name }}
+        name: Pong-TV-v${{ steps.version.outputs.name }}
         path: tv-app/app/build/outputs/apk/release/Pong-TV-*.apk
         if-no-files-found: error
 
     - name: Upload Ping-Phone zip
       uses: actions/upload-artifact@v6
       with:
-        name: Ping-Phone-${{ steps.version.outputs.name }}
+        name: Ping-Phone-v${{ steps.version.outputs.name }}
         path: phone-app/app/build/outputs/apk/release/Ping-Phone-*.apk
         if-no-files-found: error

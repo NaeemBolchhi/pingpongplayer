@@ -53,7 +53,7 @@ Subtitle search runs on the phone. When you pick a result, the phone downloads a
 
 Both apps are standard Gradle/Android projects (`phone-app/` and `tv-app/`) built with JDK 17, Gradle 8.7 and Android Gradle Plugin 8.5.2.
 
-The **Build APKs** GitHub Actions workflow builds both apps. It only runs when you start it manually (Actions tab → Build APKs → Run workflow) and produces two zips, `Ping-Phone-<version>` and `Pong-TV-<version>`. Each contains one APK per ABI plus a universal APK, named like `Pong-TV-1.0.0-arm64-v8a.apk`.
+The **Build APKs** GitHub Actions workflow builds both apps. It only runs when you start it manually (Actions tab → Build APKs → Run workflow) and produces two zips, `Ping-Phone-v<version>` and `Pong-TV-v<version>`. Each contains one APK per ABI plus a universal APK, named like `Pong-TV-v1.0.0-arm64-v8a.apk`.
 
 ### Subtitle search keys
 
@@ -81,7 +81,7 @@ Otherwise the workflow generates a throwaway test key. Test-signed builds work f
 ## Notes
 
 - Subtitle search uses the [SubSource](https://subsource.net) API. It is subject to SubSource's [terms](https://subsource.net/terms) and rate limits, so if search is busy, try again in a while.
-- Both apps check for updates in the background (at most every 12 hours) against the latest GitHub release of the repository that built them, so forks look at their own releases. Tag releases like `v1.0.1` and attach the APKs that the workflow produces (`Pong-TV-1.0.1-arm64-v8a.apk`, `Ping-Phone-1.0.1-universal.apk` and so on, or a zip of them). The app picks the file that matches the device's CPU, downloads it and opens Android's installer. The prompt offers Update, Not now and Never show again. Local builds (no `GITHUB_REPOSITORY`) don't check.
+- Both apps check for updates in the background (at most every 12 hours) against the latest GitHub release of the repository that built them, so forks look at their own releases. Tag releases like `v1.0.1` and attach the APKs that the workflow produces (`Pong-TV-v1.0.1-arm64-v8a.apk`, `Ping-Phone-v1.0.1-universal.apk` and so on, or a zip of them). The app picks the file that matches the device's CPU, downloads it and opens Android's installer. The prompt offers Update, Not now and Never show again. Local builds (no `GITHUB_REPOSITORY`) don't check.
 - Playback is powered by LibVLC (see License below).
 
 ## License

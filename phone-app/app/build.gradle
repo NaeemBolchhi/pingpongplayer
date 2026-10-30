@@ -38,7 +38,7 @@ android {
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             def abi = output.getFilter("ABI") ?: "universal"
-            outputFileName = "Ping-Phone-${variant.versionName}-${abi}.apk"
+            outputFileName = "Ping-Phone-v${variant.versionName}-${abi}.apk"
         }
     }
 
