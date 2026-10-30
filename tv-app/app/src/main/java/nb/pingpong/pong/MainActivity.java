@@ -73,6 +73,11 @@ public class MainActivity extends FragmentActivity {
     private TextView tvErrorUrl;
     private volatile boolean errorShown = false;
     private boolean loaded = false;
+    /** 0 = normal settings, 1 = HLS fallback settings (tried automatically once before showing the error). */
+    private int loadAttempt = 0;
+    // Many streaming hosts refuse LibVLC's default "VLC/3.x" user agent, so identify as a regular Android player.
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 11; Pong) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
     private TextView seekLeft, seekRight;
     private GestureDetector gestures;
     private long multiTapUntil;
@@ -304,6 +309,7 @@ public class MainActivity extends FragmentActivity {
     private void createPlayer() {
         ArrayList<String> args = new ArrayList<>();
         args.add("--http-reconnect");
+        args.add("--http-user-agent=" + USER_AGENT);
         int rel = Math.max(4, Math.min(40, Math.round(1600f / Math.max(10, subSize))));
         args.add("--freetype-rel-fontsize=" + rel);
         args.add("--freetype-color=" + subColor);
@@ -378,7 +384,12 @@ public class MainActivity extends FragmentActivity {
         runOnUiThread(() -> {
             int t = event.type;
             if (t == MediaPlayer.Event.EncounteredError) {
-                if (currentUrl != null) showError();
+                if (currentUrl != null && loadAttempt == 0 && currentUrl.startsWith("http")) {
+                    loadAttempt = 1; // one automatic retry with the fallback settings
+                    startMedia(currentUrl, 0, true);
+                } else if (currentUrl != null) {
+                    showError();
+                }
             } else if (t == MediaPlayer.Event.Playing) {
                 hideLoading();
             } else if (t == MediaPlayer.Event.TimeChanged || t == MediaPlayer.Event.LengthChanged
@@ -399,7 +410,13 @@ public class MainActivity extends FragmentActivity {
     private final Runnable loadTimeout = new Runnable() {
         @Override
         public void run() {
-            if (!loaded && currentUrl != null) showError();
+            if (loaded || currentUrl == null) return;
+            if (loadAttempt == 0 && currentUrl.startsWith("http")) {
+                loadAttempt = 1;
+                startMedia(currentUrl, 0, true);
+            } else {
+                showError();
+            }
         }
     };
 
@@ -496,13 +513,39 @@ public class MainActivity extends FragmentActivity {
         subtitleFiles.clear();
         currentUrl = url;
         currentTitle = titleFromUrl(url);
+        loadAttempt = 0;
         startMedia(url, 0, true);
     }
 
     private void startMedia(String url, long startMs, boolean play) {
         if (mediaPlayer == null) return;
         try {
-            Media media = new Media(libVLC, Uri.parse(url));
+            // IPTV-style links may carry headers after a pipe: https://host/a.m3u8|Referer=https://x/&User-Agent=Y
+            String playUrl = url;
+            String referer = null, agent = null;
+            int bar = url.indexOf('|');
+            if (bar > 0) {
+                playUrl = url.substring(0, bar).trim();
+                for (String kv : url.substring(bar + 1).split("&")) {
+                    int eq = kv.indexOf('=');
+                    if (eq <= 0) continue;
+                    String k = kv.substring(0, eq).trim().toLowerCase(java.util.Locale.ROOT);
+                    String v = Uri.decode(kv.substring(eq + 1).trim());
+                    if (k.equals("referer") || k.equals("referrer")) referer = v;
+                    else if (k.equals("user-agent")) agent = v;
+                }
+            }
+            Uri uri = Uri.parse(playUrl);
+            Media media = new Media(libVLC, uri);
+            if (playUrl.startsWith("http")) {
+                if (agent != null) media.addOption(":http-user-agent=" + agent);
+                if (referer == null && uri.getScheme() != null && uri.getHost() != null) {
+                    referer = uri.getScheme() + "://" + uri.getHost() + (uri.getPort() > 0 ? ":" + uri.getPort() : "") + "/";
+                }
+                if (referer != null) media.addOption(":http-referrer=" + referer);
+                // fallback: read playlists through the plain HTTP access module instead of the adaptive one
+                if (loadAttempt > 0) media.addOption(":adaptive-use-access");
+            }
             if (startMs > 1000) media.addOption(":start-time=" + (startMs / 1000.0));
             hideError();
             mediaPlayer.setMedia(media);
@@ -529,7 +572,7 @@ public class MainActivity extends FragmentActivity {
 
     private static String titleFromUrl(String url) {
         try {
-            String seg = Uri.parse(url).getLastPathSegment();
+            String seg = Uri.parse(url.split("\\|")[0]).getLastPathSegment();
             if (seg != null && !seg.isEmpty()) return seg;
         } catch (Exception ignored) {
         }
@@ -984,6 +1027,7 @@ public class MainActivity extends FragmentActivity {
                 break;
             case "RESUME":
                 if (errorShown && currentUrl != null) {
+                    loadAttempt = 0;
                     startMedia(currentUrl, 0, true); // retry the link that failed
                 } else if (mp != null && !mp.isPlaying()) {
                     mp.play();
