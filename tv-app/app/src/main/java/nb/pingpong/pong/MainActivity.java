@@ -75,6 +75,7 @@ public class MainActivity extends FragmentActivity {
     private boolean loaded = false;
     /** 0 = normal settings, 1 = HLS fallback settings (tried automatically once before showing the error). */
     private int loadAttempt = 0;
+    private HlsProxy hlsProxy;
     // Many streaming hosts refuse LibVLC's default "VLC/3.x" user agent, so identify as a regular Android player.
     private static final String USER_AGENT =
             "Mozilla/5.0 (Linux; Android 11; Pong) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
@@ -536,12 +537,26 @@ public class MainActivity extends FragmentActivity {
                 }
             }
             Uri uri = Uri.parse(playUrl);
-            Media media = new Media(libVLC, uri);
-            if (playUrl.startsWith("http")) {
-                if (agent != null) media.addOption(":http-user-agent=" + agent);
-                if (referer == null && uri.getScheme() != null && uri.getHost() != null) {
-                    referer = uri.getScheme() + "://" + uri.getHost() + (uri.getPort() > 0 ? ":" + uri.getPort() : "") + "/";
+            boolean web = playUrl.startsWith("http");
+            if (web && referer == null && uri.getScheme() != null && uri.getHost() != null) {
+                referer = uri.getScheme() + "://" + uri.getHost() + (uri.getPort() > 0 ? ":" + uri.getPort() : "") + "/";
+            }
+            // HLS playlists go through a small local proxy first: it fixes disguised segment names/types
+            // (e.g. "page-0.html") that LibVLC rejects but other players accept. The second try is direct.
+            boolean proxied = false;
+            if (web && loadAttempt == 0 && uri.getPath() != null
+                    && uri.getPath().toLowerCase(java.util.Locale.ROOT).contains("m3u8")) {
+                try {
+                    if (hlsProxy == null) hlsProxy = new HlsProxy(agent != null ? agent : USER_AGENT);
+                    uri = Uri.parse(hlsProxy.playlistUrl(playUrl, referer));
+                    proxied = true;
+                } catch (Exception ignored) {
+                    // fall back to a direct connection
                 }
+            }
+            Media media = new Media(libVLC, uri);
+            if (web && !proxied) {
+                if (agent != null) media.addOption(":http-user-agent=" + agent);
                 if (referer != null) media.addOption(":http-referrer=" + referer);
                 // fallback: read playlists through the plain HTTP access module instead of the adaptive one
                 if (loadAttempt > 0) media.addOption(":adaptive-use-access");
@@ -1144,6 +1159,7 @@ public class MainActivity extends FragmentActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (hlsProxy != null) hlsProxy.stop();
         serverRunning = false;
         handler.removeCallbacksAndMessages(null);
         if (nsdManager != null && registrationListener != null) {
