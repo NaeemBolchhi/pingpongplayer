@@ -57,10 +57,10 @@ The **Build APKs** GitHub Actions workflow builds both apps. It only runs when y
 
 ### Subtitle search keys
 
-Subtitle search needs SubSource API keys, which are supplied when the phone app is built. Add a repository secret named `SUBSOURCE_API_KEYS` containing your API key in a JSON array:
+Subtitle search needs SubSource API keys, which are supplied when the phone app is built. Add a repository secret named `SUBSOURCE_API_KEYS` containing a JSON array of keys:
 
 ```
-["your-api-key"]
+["your-first-key", "your-second-key"]
 ```
 
 You can create keys in the API tab of your SubSource account dashboard. If the secret is missing, the apps still build, but subtitle search is disabled in the phone app.
@@ -89,6 +89,10 @@ The code in this repository is released under the [MIT License](LICENSE).
 
 ### Third-party software
 
-The Pong! TV app bundles [LibVLC](https://www.videolan.org/vlc/libvlc.html) (version 3.5.1) from the VideoLAN project, which is licensed under the **GNU Lesser General Public License (LGPL) v2.1**. LibVLC is not modified here. Its source code is available at VideoLAN's code repo, and its license text is at <https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>.
+The Pong! TV app bundles [LibVLC](https://code.videolan.org/videolan/libvlc-android) (the `libvlc-all` library, version 3.5.1) from the VideoLAN project, which is licensed under the **GNU Lesser General Public License (LGPL) v2.1 or later**. LibVLC is not modified here. Its source code is available from the link above, and its license text is at <https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>.
+
+LibVLC itself includes other open-source libraries (such as FFmpeg) under their own licenses; see [videolan.org/legal.html](https://www.videolan.org/legal.html) for details.
 
 Because the app only links to LibVLC as a library, you can rebuild Pong! with a different or modified version of it by changing the dependency in `tv-app/app/build.gradle`.
+
+Other dependencies: AndroidX (including Media3, used on the TV to read ASS/SSA, WebVTT and TTML subtitles), Material Components and Gson (Apache License 2.0).
