@@ -4,7 +4,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -15,6 +14,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import okhttp3.Response;
 
 /**
  * Tiny loopback HTTP proxy that sits between LibVLC and an HLS stream.
@@ -104,39 +105,39 @@ final class HlsProxy {
     }
 
     private void servePlaylist(OutputStream out, String url, String referer) throws IOException {
-        HttpURLConnection c = open(url, referer);
-        int code = c.getResponseCode();
-        if (code >= 400) {
-            status(out, code, "Upstream error");
-            return;
+        try (Response resp = open(url, referer)) {
+            if (resp.code() >= 400 || resp.body() == null) {
+                status(out, resp.code(), "Upstream error");
+                return;
+            }
+            byte[] raw = readAll(resp.body().byteStream(), MAX_PLAYLIST);
+            // relative entries resolve against the address after any redirects
+            String base = resp.request().url().toString();
+            String text = new String(raw, StandardCharsets.UTF_8);
+            byte[] body = rewrite(text, base, referer).getBytes(StandardCharsets.UTF_8);
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: "
+                    + body.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+            out.write(body);
+            out.flush();
         }
-        byte[] raw = readAll(c.getInputStream(), MAX_PLAYLIST);
-        // follow redirects that happened: relative entries resolve against the final address
-        String base = c.getURL().toString();
-        String text = new String(raw, StandardCharsets.UTF_8);
-        byte[] body = rewrite(text, base, referer).getBytes(StandardCharsets.UTF_8);
-        out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: "
-                + body.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
-        out.write(body);
-        out.flush();
     }
 
     private void servePassThrough(OutputStream out, String url, String referer, String type) throws IOException {
-        HttpURLConnection c = open(url, referer);
-        int code = c.getResponseCode();
-        if (code >= 400) {
-            status(out, code, "Upstream error");
-            return;
+        try (Response resp = open(url, referer)) {
+            if (resp.code() >= 400 || resp.body() == null) {
+                status(out, resp.code(), "Upstream error");
+                return;
+            }
+            // no Content-Length: the upstream may be compressed in transit; the connection close ends the body
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + type + "\r\nConnection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.ISO_8859_1));
+            try (InputStream in = resp.body().byteStream()) {
+                byte[] buf = new byte[32 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            out.flush();
         }
-        // no Content-Length: the upstream may be compressed in transit; the connection close ends the body
-        out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + type + "\r\nConnection: close\r\n\r\n")
-                .getBytes(StandardCharsets.ISO_8859_1));
-        try (InputStream in = c.getInputStream()) {
-            byte[] buf = new byte[32 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-        }
-        out.flush();
     }
 
     // ------------------------------------------------------------------- rewriting
@@ -202,15 +203,8 @@ final class HlsProxy {
 
     // ---------------------------------------------------------------------- helpers
 
-    private HttpURLConnection open(String url, String referer) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(10000);
-        c.setReadTimeout(20000);
-        c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent", userAgent);
-        c.setRequestProperty("Accept", "*/*");
-        if (referer != null && !referer.isEmpty()) c.setRequestProperty("Referer", referer);
-        return c;
+    private Response open(String url, String referer) throws IOException {
+        return Net.client().newCall(Net.request(url, userAgent, referer).build()).execute();
     }
 
     private static void status(OutputStream out, int code, String text) throws IOException {

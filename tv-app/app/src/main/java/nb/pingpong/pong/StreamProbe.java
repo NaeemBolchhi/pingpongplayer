@@ -2,10 +2,12 @@ package nb.pingpong.pong;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+
+import okhttp3.Request;
+import okhttp3.Response;
 
 /**
  * Looks at a link that failed to play and says in plain words what the server actually returned
@@ -76,32 +78,25 @@ final class StreamProbe {
     }
 
     private static Resp get(String url, String ua, String referer, int max, boolean range) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(8000);
-        c.setReadTimeout(8000);
-        c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent", ua);
-        if (referer != null && !referer.isEmpty()) c.setRequestProperty("Referer", referer);
-        if (range) c.setRequestProperty("Range", "bytes=0-" + (max - 1));
+        Request.Builder rb = Net.request(url, ua, referer);
+        if (range) rb.header("Range", "bytes=0-" + (max - 1));
         Resp r = new Resp();
-        try {
-            r.code = c.getResponseCode();
-            r.type = c.getContentType();
-            r.finalUrl = c.getURL().toString();
-            if (r.code >= 400) {
+        try (Response resp = Net.client().newCall(rb.build()).execute()) {
+            r.code = resp.code();
+            r.type = resp.header("Content-Type");
+            r.finalUrl = resp.request().url().toString();
+            if (r.code >= 400 || resp.body() == null) {
                 r.body = new byte[0];
                 return r;
             }
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            try (InputStream in = c.getInputStream()) {
+            try (InputStream in = resp.body().byteStream()) {
                 byte[] b = new byte[8192];
                 int n;
                 while (bos.size() < max && (n = in.read(b, 0, Math.min(b.length, max - bos.size()))) > 0) bos.write(b, 0, n);
             }
             r.body = bos.toByteArray();
             return r;
-        } finally {
-            c.disconnect();
         }
     }
 }
