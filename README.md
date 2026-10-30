@@ -60,7 +60,7 @@ The **Build APKs** GitHub Actions workflow builds both apps. It only runs when y
 Subtitle search needs SubSource API keys, which are supplied when the phone app is built. Add a repository secret named `SUBSOURCE_API_KEYS` containing your API key in a JSON array:
 
 ```
-["your-first-key"]
+["your-api-key"]
 ```
 
 You can create keys in the API tab of your SubSource account dashboard. If the secret is missing, the apps still build, but subtitle search is disabled in the phone app.
