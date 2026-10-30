@@ -44,7 +44,11 @@ final class SubtitleServer {
                 while (served < MAX_REQUESTS) {
                     long left = deadline - System.currentTimeMillis();
                     if (left <= 0) break;
-                    server.setSoTimeout((int) left);
+                    try {
+                        server.setSoTimeout((int) left);
+                    } catch (IOException e) {
+                        break; // server socket already closed
+                    }
                     try (Socket s = server.accept()) {
                         s.setSoTimeout(5000);
                         if (handle(s, path, data)) served++;
