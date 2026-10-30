@@ -536,9 +536,9 @@
 
                         <com.google.android.material.textfield.TextInputLayout
                             style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
-                            android:layout_width="76dp"
+                            android:layout_width="104dp"
                             android:layout_height="wrap_content"
-                            android:hint="Lang">
+                            android:hint="Language">
 
                             <com.google.android.material.textfield.TextInputEditText
                                 android:id="@+id/et_lang"
@@ -560,18 +560,10 @@
                             style="@style/Widget.Ping.Wide"
                             android:layout_width="0dp"
                             android:layout_height="48dp"
-                            android:layout_marginEnd="12dp"
                             android:layout_weight="1"
                             android:text="Search"
                             app:icon="@drawable/ic_search" />
 
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btn_account"
-                            style="@style/Widget.Ping.WideTonal"
-                            android:layout_width="wrap_content"
-                            android:layout_height="48dp"
-                            android:text="Account"
-                            app:icon="@drawable/ic_key" />
                     </LinearLayout>
 
                     <LinearLayout

@@ -54,8 +54,12 @@ jobs:
       working-directory: tv-app
       run: gradle assembleRelease --no-daemon
 
+    # SUBSOURCE_API_KEYS: repository secret holding a JSON array of SubSource API keys,
+    # e.g. ["key-one","key-two","key-three"]. They are encrypted into the phone app at build time.
     - name: Build Phone App (Ping!)
       working-directory: phone-app
+      env:
+        SUBSOURCE_API_KEYS: ${{ secrets.SUBSOURCE_API_KEYS }}
       run: gradle assembleRelease --no-daemon
 
     - name: Read version

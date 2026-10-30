@@ -36,8 +36,10 @@ import org.videolan.libvlc.MediaPlayer;
 import org.videolan.libvlc.util.VLCVideoLayout;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
@@ -62,9 +64,9 @@ public class MainActivity extends FragmentActivity {
     private MediaPlayer mediaPlayer;
     private View controlsOverlay;
     private SeekBar seekBar;
-    private TextView tvTime, tvIdleChip, tvTitle, tvLoadingTitle;
+    private TextView tvTimeCur, tvTimeTotal, tvIdleChip, tvTitle, tvLoadingTitle;
     private View idleContainer, loadingOverlay, confirmOverlay, topBar, bottomBar, seekGlowLeft, seekGlowRight;
-    private ImageButton btnPlayPause, btnSubtitle, btnBackNav, btnBack10, btnFwd10;
+    private ImageButton btnPlayPause, btnBackNav, btnBack10, btnFwd10;
     private Button btnErrorOk, btnConfirmKeep, btnConfirmStop;
     private volatile boolean confirmShown = false;
     private View errorOverlay;
@@ -114,7 +116,8 @@ public class MainActivity extends FragmentActivity {
         videoLayout = findViewById(R.id.video_layout);
         controlsOverlay = findViewById(R.id.controls_overlay);
         seekBar = findViewById(R.id.seek_bar);
-        tvTime = findViewById(R.id.tv_time);
+        tvTimeCur = findViewById(R.id.tv_time_cur);
+        tvTimeTotal = findViewById(R.id.tv_time_total);
         idleContainer = findViewById(R.id.idle_container);
         tvIdleChip = findViewById(R.id.tv_idle_chip);
         loadingOverlay = findViewById(R.id.loading_overlay);
@@ -131,7 +134,6 @@ public class MainActivity extends FragmentActivity {
         btnConfirmStop = findViewById(R.id.btn_confirm_stop);
         tvTitle = findViewById(R.id.tv_title);
         btnPlayPause = findViewById(R.id.btn_play_pause);
-        btnSubtitle = findViewById(R.id.btn_subtitle);
 
         if (Build.VERSION.SDK_INT >= 28) {
             WindowManager.LayoutParams lp = getWindow().getAttributes();
@@ -154,10 +156,6 @@ public class MainActivity extends FragmentActivity {
 
         btnPlayPause.setOnClickListener(v -> {
             togglePlayPause();
-            showControls();
-        });
-        btnSubtitle.setOnClickListener(v -> {
-            toggleSubtitles();
             showControls();
         });
         btnBack10.setOnClickListener(v -> {
@@ -240,7 +238,7 @@ public class MainActivity extends FragmentActivity {
             public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                 if (!fromUser || mediaPlayer == null) return;
                 long len = mediaPlayer.getLength();
-                if (len > 0) tvTime.setText(formatTime(len * progress / 1000) + " / " + formatTime(len));
+                if (len > 0) tvTimeCur.setText(formatTime(len * progress / 1000));
             }
 
             @Override
@@ -594,7 +592,12 @@ public class MainActivity extends FragmentActivity {
         lastSeekAt = now;
         seekTo(t, len);
         if (len > 0) seekBar.setProgress((int) (t * 1000 / len));
-        tvTime.setText(formatTime(t) + " / " + (len > 0 ? formatTime(len) : "--:--"));
+        setTimes(t, len);
+    }
+
+    private void setTimes(long t, long len) {
+        tvTimeCur.setText(formatTime(t));
+        tvTimeTotal.setText(len > 0 ? formatTime(len) : "--:--");
     }
 
     private void seekTo(long ms, long len) {
@@ -656,13 +659,26 @@ public class MainActivity extends FragmentActivity {
                         if (p.endsWith(e)) ext = e;
                     }
                 }
-                final File f = new File(getCacheDir(), "sub_" + System.currentTimeMillis() + ext);
-                try (OutputStream out = new FileOutputStream(f)) {
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    bos.write(buf, 0, n);
+                    if (bos.size() > 16 * 1024 * 1024) throw new IOException("Subtitle file too large");
                 }
                 in.close();
+                byte[] data = bos.toByteArray();
+
+                // ASS / SSA / WebVTT / TTML -> SRT. Null means "use the original file unchanged".
+                byte[] srt = SubtitleConverter.toSrt(data);
+                if (srt != null) {
+                    data = srt;
+                    ext = ".srt";
+                }
+                final File f = new File(getCacheDir(), "sub_" + System.currentTimeMillis() + ext);
+                try (OutputStream out = new FileOutputStream(f)) {
+                    out.write(data);
+                }
                 runOnUiThread(() -> {
                     addSubtitleFile(f, true);
                     Toast.makeText(this, "Subtitles loaded", Toast.LENGTH_SHORT).show();
@@ -703,7 +719,7 @@ public class MainActivity extends FragmentActivity {
                     long len = mediaPlayer.getLength();
                     long t = mediaPlayer.getTime();
                     if (len > 0) seekBar.setProgress((int) (t * 1000 / len));
-                    tvTime.setText(formatTime(t) + " / " + (len > 0 ? formatTime(len) : "--:--"));
+                    setTimes(t, len);
                     tvTitle.setText(currentTitle);
                     updatePlayIcon(mediaPlayer.isPlaying());
                 }
@@ -720,6 +736,11 @@ public class MainActivity extends FragmentActivity {
     }
 
     private void showControls() {
+        showControls(false);
+    }
+
+    /** @param focusPlay put focus on the play/pause button (used right after play/pause with the menu hidden) */
+    private void showControls(boolean focusPlay) {
         if (currentUrl == null) return;
         if (confirmShown || errorShown) return;
         controlsOverlay.setVisibility(View.VISIBLE);
@@ -727,7 +748,8 @@ public class MainActivity extends FragmentActivity {
         tvTitle.setText(currentTitle);
         if (mediaPlayer != null) updatePlayIcon(mediaPlayer.isPlaying());
         View f = getCurrentFocus();
-        if (f == null || f.getParent() == null) seekBar.requestFocus();
+        if (focusPlay) btnPlayPause.requestFocus();
+        else if (f == null || f.getParent() == null) seekBar.requestFocus();
         handler.removeCallbacks(hideControlsRunnable);
         handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS);
     }
@@ -776,7 +798,7 @@ public class MainActivity extends FragmentActivity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         View focus = getCurrentFocus();
-        boolean onButton = controlsVisible && focus != null && (focus == btnPlayPause || focus == btnSubtitle
+        boolean onButton = controlsVisible && focus != null && (focus == btnPlayPause
                 || focus == btnBackNav || focus == btnBack10 || focus == btnFwd10 || focus == seekBar);
 
         if (confirmShown) {
@@ -799,15 +821,17 @@ public class MainActivity extends FragmentActivity {
         switch (keyCode) {
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                 togglePlayPause();
-                showControls();
+                showControls(!controlsVisible);
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY:
                 if (mediaPlayer != null && !mediaPlayer.isPlaying()) mediaPlayer.play();
-                showControls();
+                updatePlayIcon(true);
+                showControls(!controlsVisible);
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 if (mediaPlayer != null && mediaPlayer.isPlaying()) mediaPlayer.pause();
-                showControls();
+                updatePlayIcon(false);
+                showControls(!controlsVisible);
                 return true;
             case KeyEvent.KEYCODE_MEDIA_REWIND:
             case KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD:
@@ -844,7 +868,7 @@ public class MainActivity extends FragmentActivity {
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
                 togglePlayPause();
-                showControls();
+                showControls(!controlsVisible);
                 return true;
             case KeyEvent.KEYCODE_DPAD_LEFT:
                 seekWithFeedback(-SEEK_STEP_MS);

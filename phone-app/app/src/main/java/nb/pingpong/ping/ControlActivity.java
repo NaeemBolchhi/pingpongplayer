@@ -87,7 +87,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     private Slider seek, volume, slSize, slBg;
     private MaterialButton btnBack10, btnPlay, btnFwd10, btnPasteVideo, btnSlower, btnFaster, btnSdr, btnHdr;
     private MaterialButton btnAudioLess, btnAudioMore, btnAudioReset, btnSubLess, btnSubMore, btnSubReset;
-    private MaterialButton btnPasteSub, btnSearch, btnAccount;
+    private MaterialButton btnPasteSub, btnSearch;
     private MaterialAutoCompleteTextView ddAudio, ddSubtitle;
     private View tilAudio, tilSubtitle;
     private MaterialSwitch swBold;
@@ -173,7 +173,6 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         btnSubReset = findViewById(R.id.btn_sub_reset);
         btnPasteSub = findViewById(R.id.btn_paste_sub);
         btnSearch = findViewById(R.id.btn_search);
-        btnAccount = findViewById(R.id.btn_account);
         ddAudio = findViewById(R.id.dd_audio);
         ddSubtitle = findViewById(R.id.dd_subtitle);
         tilAudio = findViewById(R.id.til_audio);
@@ -331,7 +330,6 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             searchSubtitles();
             return true;
         });
-        btnAccount.setOnClickListener(v -> showAccountDialog());
 
         // style
         for (int i = 0; i < COLORS.length; i++) {
@@ -717,15 +715,15 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             snack("Enter a movie or show name");
             return;
         }
-        if (!SubtitleApi.hasApiKey(this)) {
-            showAccountDialog();
+        if (!SubtitleApi.hasKeys()) {
+            snack("Subtitle search isn't set up in this build");
             return;
         }
         results.removeAllViews();
         addMessageRow("Searching…");
         new Thread(() -> {
             try {
-                final List<SubtitleApi.Result> found = SubtitleApi.search(this, query, lang);
+                final List<SubtitleApi.Result> found = SubtitleApi.search(query, lang);
                 runOnUiThread(() -> showResults(found));
             } catch (Exception e) {
                 runOnUiThread(() -> {
@@ -775,7 +773,8 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         snack("Fetching subtitle…");
         new Thread(() -> {
             try {
-                final String link = SubtitleApi.downloadLink(this, r.fileId);
+                final SubtitleApi.Fetched f = SubtitleApi.download(r.id, r.season, r.episode);
+                final String link = SubtitleServer.serve(f.data, f.ext, device.host, device.port);
                 runOnUiThread(() -> {
                     send("SUB_URL:" + link);
                     snack("Subtitle sent to TV");
@@ -784,36 +783,6 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
                 runOnUiThread(() -> snack(String.valueOf(e.getMessage())));
             }
         }, "sub-download").start();
-    }
-
-    private void showAccountDialog() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(24), dp(8), dp(24), 0);
-        final EditText key = new EditText(this);
-        key.setHint("OpenSubtitles API key");
-        key.setSingleLine(true);
-        final EditText user = new EditText(this);
-        user.setHint("Username");
-        user.setSingleLine(true);
-        final EditText pass = new EditText(this);
-        pass.setHint("Password");
-        pass.setSingleLine(true);
-        pass.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        key.setText(SubtitleApi.prefs(this).getString("api_key", ""));
-        user.setText(SubtitleApi.prefs(this).getString("username", ""));
-        pass.setText(SubtitleApi.prefs(this).getString("password", ""));
-        box.addView(key);
-        box.addView(user);
-        box.addView(pass);
-        new MaterialAlertDialogBuilder(this)
-                .setTitle("OpenSubtitles.com")
-                .setMessage("Searching needs a free API key; downloading needs your account login.")
-                .setView(box)
-                .setPositiveButton("Save", (d, w) -> SubtitleApi.saveCredentials(this,
-                        key.getText().toString(), user.getText().toString(), pass.getText().toString()))
-                .setNegativeButton("Cancel", null)
-                .show();
     }
 
     // -------------------------------------------------------------- helpers
