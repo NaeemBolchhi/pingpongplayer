@@ -367,7 +367,8 @@ public final class TorrentStreamer {
         if (pick >= 0 && !names.containsKey(pick)) pick = -1;
         if (pick < 0 && videoFiles.size() == 1) pick = videoFiles.get(0).index;
         if (pick >= 0) {
-            CTRL.execute(() -> applyFile(pick));
+            final int chosen = pick;
+            CTRL.execute(() -> applyFile(chosen));
         } else {
             choicePending = true;
             choiceDeadline = System.currentTimeMillis() + CHOICE_TIMEOUT_MS;
