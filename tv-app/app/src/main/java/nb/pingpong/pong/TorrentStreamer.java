@@ -52,8 +52,10 @@ import java.util.concurrent.Executors;
  * that LibVLC can play. Only one torrent is active at a time.
  * <p>
  * The download folder lives on the volume with the most free space (app-specific storage, no permission needed).
- * It is cleared on app start and before every new video. Playback ends the session but leaves the files until
- * the next load. Seeding happens while downloading, with a low upload cap.
+ * It is cleared on app start and whenever a new link or share is loaded. The session stays up when a video
+ * ends, so it can be replayed or another video of the same torrent picked; it stops when the viewer stops
+ * playback on the TV or loads something else. Switching videos erases partly downloaded ones and keeps
+ * fully downloaded ones unless their space is needed. Seeding happens alongside, with a low upload cap.
  */
 public final class TorrentStreamer {
     private static final long MARGIN = 256L * 1024 * 1024;
@@ -77,7 +79,7 @@ public final class TorrentStreamer {
     }
 
     public static final class Snapshot {
-        public final String state; // metadata, choosing, buffering, streaming, error
+        public final String state; // metadata, choosing, checking, buffering, streaming, error
         public final String title;
         public final int selected;
         public final int peers;
@@ -108,6 +110,9 @@ public final class TorrentStreamer {
 
         /** Matching subtitle files extracted from the torrent, once their pieces have arrived. */
         void onSubtitles(List<File> files);
+
+        /** A video of the torrent is being prepared (first pick, or a switch from the playlist). */
+        void onLoading(String title);
     }
 
     private static final ExecutorService CTRL = Executors.newSingleThreadExecutor(r -> {
@@ -131,6 +136,11 @@ public final class TorrentStreamer {
         if (instance == null) instance = new TorrentStreamer(context.getApplicationContext());
         instance.listener = listener;
         return instance;
+    }
+
+    /** The local URL of the video being served now; null while another one is being prepared. */
+    public String streamUrl() {
+        return bufferPending ? null : currentUrl;
     }
 
     public static boolean isActive() {
@@ -176,6 +186,11 @@ public final class TorrentStreamer {
     private long choiceDeadline;
     private long subsWaitAt;
     private int subsDeliveredFor = -1;
+    private long lastMetaCheck;
+    private int haveCount = -1;
+    private volatile boolean checkingFiles;
+    /** Video file indices in the order they were played, most recent last. */
+    private final List<Integer> recent = new ArrayList<>();
     private Thread pump;
 
     // selected file geometry
@@ -199,36 +214,54 @@ public final class TorrentStreamer {
             return null; // all alerts
         }
 
+        /*
+         * This runs on libtorrent4j's alert thread. Nothing here may stop the session: SessionManager.stop()
+         * joins this very thread, so stopping from here deadlocks and every later torrent hangs on
+         * "Looking for peers". Real work goes to CTRL.
+         */
         @Override
         public void alert(Alert<?> alert) {
             if (!running) return;
             try {
                 switch (alert.type()) {
-                    case ADD_TORRENT:
-                        ((AddTorrentAlert) alert).handle().resume();
+                    case ADD_TORRENT: {
+                        TorrentHandle h = ((AddTorrentAlert) alert).handle();
+                        if (h != null && h.isValid()) {
+                            handle = h; // lets the pump report peers and speed while metadata is still loading
+                            h.resume();
+                        } else {
+                            failLater("Couldn't add the torrent");
+                        }
                         break;
-                    case METADATA_RECEIVED:
-                        onMetadata(((MetadataReceivedAlert) alert).handle());
+                    }
+                    case METADATA_RECEIVED: {
+                        final TorrentHandle h = ((MetadataReceivedAlert) alert).handle();
+                        CTRL.execute(() -> onMetadata(h));
                         break;
+                    }
                     case TORRENT_ERROR: {
                         TorrentErrorAlert e = (TorrentErrorAlert) alert;
                         String m = e.error() == null ? null : e.error().getMessage();
-                        fail("Torrent error" + (m == null || m.isEmpty() ? "" : ": " + m));
+                        failLater("Torrent error" + (m == null || m.isEmpty() ? "" : ": " + m));
                         break;
                     }
                     case FILE_ERROR:
                         FileErrorAlert fe = (FileErrorAlert) alert;
                         String msg = fe.error() == null ? null : fe.error().getMessage();
-                        fail("Can't write torrent files" + (msg == null || msg.isEmpty() ? "" : ": " + msg));
+                        failLater("Can't write torrent files" + (msg == null || msg.isEmpty() ? "" : ": " + msg));
                         break;
                     default:
                         break;
                 }
             } catch (Throwable t) {
-                fail("Torrent error: " + t.getMessage());
+                failLater("Torrent error: " + t.getMessage());
             }
         }
     };
+
+    private void failLater(final String message) {
+        CTRL.execute(() -> fail(message));
+    }
 
     private TorrentStreamer(Context app) {
         this.app = app;
@@ -256,6 +289,9 @@ public final class TorrentStreamer {
         stopNow();
         magnetUri = magnet == null ? "" : magnet;
         running = true;
+        peers = 0;
+        rate = 0;
+        progress = 0;
         metadataReady = false;
         choicePending = false;
         bufferPending = false;
@@ -277,6 +313,12 @@ public final class TorrentStreamer {
         lastPeerAt = System.currentTimeMillis();
         subsDeliveredFor = -1;
         subsWaitAt = 0;
+        lastMetaCheck = 0;
+        haveCount = -1;
+        checkingFiles = false;
+        recent.clear();
+        // Tell the TV screen and the phone right away; resolving the DHT routers below can take a few seconds.
+        publish();
 
         dir = downloadDir(app);
         //noinspection ResultOfMethodCallIgnored
@@ -294,28 +336,23 @@ public final class TorrentStreamer {
         sm.addListener(alerts);
         session = sm;
         sm.download(magnet, dir, TorrentFlags.DEFAULT_DONT_DOWNLOAD);
-        publish();
 
         pump = new Thread(this::pump, "torrent-pump");
         pump.setDaemon(true);
         pump.start();
     }
 
+    /** Runs on CTRL. */
     private void onMetadata(TorrentHandle h) {
-        if (metadataReady || !running) return;
+        if (metadataReady || !running || h == null || !h.isValid()) return;
         TorrentInfo ti = h.torrentFile();
         if (ti == null || !ti.isValid()) return;
         metadataReady = true;
         handle = h;
         info = ti;
         lastPeerAt = System.currentTimeMillis();
-
-        long need = ti.totalSize() + MARGIN;
-        long free = dir.getUsableSpace();
-        if (free < need) {
-            fail("Not enough space: need " + human(need) + ", free " + human(free));
-            return;
-        }
+        // No space check here: only the video that gets picked has to fit (see applyFile), so one
+        // episode of a large season pack can play on a small drive.
 
         names.clear();
         sizes.clear();
@@ -367,8 +404,7 @@ public final class TorrentStreamer {
         if (pick >= 0 && !names.containsKey(pick)) pick = -1;
         if (pick < 0 && videoFiles.size() == 1) pick = videoFiles.get(0).index;
         if (pick >= 0) {
-            final int chosen = pick;
-            CTRL.execute(() -> applyFile(chosen));
+            applyFile(pick);
         } else {
             choicePending = true;
             choiceDeadline = System.currentTimeMillis() + CHOICE_TIMEOUT_MS;
@@ -390,8 +426,49 @@ public final class TorrentStreamer {
         if (index < 0 || index >= ti.numFiles() || !videoIndices.contains(index)) return;
         if (index == selected && server != null && !bufferPending) return;
 
+        // ---- space: only the picked video and its subtitles have to fit
+        List<Integer> subs = subsByVideo.get(index);
+        long need = MARGIN + Math.max(0, ti.files().fileSize(index) - doneBytes(h, ti, index));
+        if (subs != null) for (int sub : subs) need += Math.max(0, ti.files().fileSize(sub) - doneBytes(h, ti, sub));
+        // Other videos of this torrent that have data on disk. Partly downloaded ones are erased; fully
+        // downloaded ones stay so they can be replayed, unless their space is needed for this one.
+        List<Integer> erase = new ArrayList<>();
+        List<Integer> kept = new ArrayList<>();
+        long reclaim = 0;
+        for (int v : videoIndices) {
+            if (v == index) continue;
+            long done = doneBytes(h, ti, v);
+            if (done <= 0) continue;
+            if (done >= ti.files().fileSize(v)) {
+                kept.add(v);
+            } else {
+                erase.add(v);
+                reclaim += done;
+            }
+        }
+        long free = dir.getUsableSpace();
+        // least recently played first
+        Collections.sort(kept, (a, b) -> Integer.compare(recent.indexOf(a), recent.indexOf(b)));
+        for (int v : kept) {
+            if (free + reclaim >= need) break;
+            erase.add(v);
+            reclaim += ti.files().fileSize(v);
+        }
+        if (free + reclaim < need) {
+            fail("Not enough space: need " + human(need) + ", free " + human(free + reclaim));
+            return;
+        }
+
+        // Let the screen drop the old stream before its server goes away (VLC would report an error).
+        final Listener ll = listener;
+        final String nextTitle = names.get(index);
+        if (ll != null) main.post(() -> ll.onLoading(nextTitle));
+        currentUrl = null;    // set again once the new video's server is up (after its geometry below)
+        bufferPending = true; // streamUrl() is null from here until the new video is ready
         if (server != null) server.stop();
         closeChannel();
+        recent.remove(Integer.valueOf(index));
+        recent.add(index);
         selected = index;
         choicePending = false;
         subsDeliveredFor = -1;
@@ -402,10 +479,10 @@ public final class TorrentStreamer {
         Priority[] priorities = new Priority[ti.numFiles()];
         Arrays.fill(priorities, Priority.IGNORE);
         priorities[index] = Priority.DEFAULT;
-        List<Integer> subs = subsByVideo.get(index);
         if (subs != null) for (int s : subs) if (s < priorities.length) priorities[s] = Priority.DEFAULT;
         h.prioritizeFiles(priorities);
         h.clearPieceDeadlines();
+        if (!erase.isEmpty()) eraseFiles(h, ti, erase);
 
         fileOffset = ti.files().fileOffset(index);
         fileSize = ti.files().fileSize(index);
@@ -450,8 +527,45 @@ public final class TorrentStreamer {
             return;
         }
         bufferPending = true;
+        haveCount = -1;
         bufferDeadline = System.currentTimeMillis() + BUFFER_TIMEOUT_MS;
         notifyState("buffering");
+    }
+
+    /** Bytes of a file already downloaded and verified (counted in whole pieces). */
+    private static long doneBytes(TorrentHandle h, TorrentInfo ti, int idx) {
+        long size = ti.files().fileSize(idx);
+        if (size <= 0) return 0;
+        long off = ti.files().fileOffset(idx);
+        long pl = Math.max(1, ti.pieceLength());
+        int first = ti.files().pieceIndexAtFile(idx);
+        int last = ti.files().lastPieceIndexAtFile(idx);
+        long done = 0;
+        for (int p = first; p <= last; p++) {
+            if (!h.havePiece(p)) continue;
+            long ps = (long) p * pl, pe = ps + pl;
+            done += Math.max(0, Math.min(pe, off + size) - Math.max(ps, off));
+        }
+        return done;
+    }
+
+    /**
+     * Deletes videos of the current torrent from disk. Pausing makes libtorrent close its handles so the
+     * space is really freed; the recheck makes it forget pieces that are gone (otherwise it would try to
+     * upload them and stop with a file error). Fully downloaded videos that are kept get verified again.
+     */
+    private void eraseFiles(TorrentHandle h, TorrentInfo ti, List<Integer> files) {
+        h.pause();
+        for (int v : files) {
+            String path = ti.files().filePath(v, dir.getAbsolutePath());
+            if (path != null) {
+                //noinspection ResultOfMethodCallIgnored
+                new File(path).delete();
+            }
+        }
+        h.forceRecheck();
+        h.resume();
+        checkingFiles = true;
     }
 
     private static String nameOf(File file) {
@@ -467,7 +581,7 @@ public final class TorrentStreamer {
             try {
                 long now = System.currentTimeMillis();
                 if (!metadataReady && now > metadataDeadline) {
-                    fail("No peers or metadata after 90 seconds");
+                    failLater("No peers or metadata after 90 seconds");
                     break;
                 }
                 TorrentHandle h = handle;
@@ -476,8 +590,25 @@ public final class TorrentStreamer {
                     peers = st.numPeers();
                     rate = st.downloadRate();
                     if (peers > 0) lastPeerAt = now;
-                    if (metadataReady && !bufferPending && now - lastPeerAt > PEER_TIMEOUT_MS) {
-                        fail("No peers are sharing this torrent");
+                    TorrentStatus.State ts = st.state();
+                    boolean checking = ts == TorrentStatus.State.CHECKING_FILES
+                            || ts == TorrentStatus.State.CHECKING_RESUME_DATA;
+                    checkingFiles = checking;
+                    if (checking) haveCount = -1; // a recheck resets what libtorrent has; re-measure afterwards
+                    if (checking && bufferPending) bufferDeadline = now + BUFFER_TIMEOUT_MS; // not stalled
+                    if (!metadataReady && now - lastMetaCheck >= 1000) {
+                        // Fallback in case the metadata alert was missed (e.g. a full alert queue).
+                        lastMetaCheck = now;
+                        TorrentInfo ti = h.torrentFile();
+                        if (ti != null && ti.isValid()) {
+                            final TorrentHandle mh = h;
+                            CTRL.execute(() -> onMetadata(mh));
+                        }
+                    }
+                    // Only while waiting for a choice: once a video streams, a quiet swarm must not kill
+                    // playback (the file may already be complete, or the viewer may simply be paused).
+                    if (metadataReady && choicePending && now - lastPeerAt > PEER_TIMEOUT_MS) {
+                        failLater("No peers are sharing this torrent");
                         break;
                     }
                     if (choicePending && now > choiceDeadline) {
@@ -486,19 +617,32 @@ public final class TorrentStreamer {
                         for (TvStatus.TorrentFile f : videoFiles) {
                             if (biggest == null || f.size > biggest.size) biggest = f;
                         }
-                        choicePending = false;
-                        if (biggest != null) applyFile(biggest.index);
+                        choiceDeadline = Long.MAX_VALUE; // applyFile clears choicePending on CTRL
+                        if (biggest == null) choicePending = false;
+                        else {
+                            final int pick = biggest.index;
+                            CTRL.execute(() -> {
+                                if (running && selected < 0) applyFile(pick);
+                            });
+                        }
                     }
                     if (bufferPending) {
+                        int have = haveCount(h);
+                        if (have > haveCount) {
+                            // still making progress: keep waiting
+                            if (haveCount >= 0) bufferDeadline = now + BUFFER_TIMEOUT_MS;
+                            haveCount = have;
+                        }
                         if (now > bufferDeadline) {
-                            fail("Couldn't buffer the video (" + peers + " peers, " + human(rate) + "/s)");
+                            failLater("Couldn't buffer the video (" + peers + " peers, " + human(rate) + "/s)");
                             break;
                         }
-                        progress = bufferPercent(h);
-                        if (bufferReady(h)) {
+                        progress = bufferPercent();
+                        if (currentUrl != null && server != null && bufferReady(h)) {
                             bufferPending = false;
                             final String url = currentUrl, title = currentTitle;
                             final Listener l = listener;
+                            notifyState("streaming");
                             main.post(() -> {
                                 if (l != null) l.onReady(url, title);
                             });
@@ -507,13 +651,13 @@ public final class TorrentStreamer {
                         progress = (int) (st.progress() * 100);
                     }
                     if (metadataReady && !bufferPending && currentUrl != null) maybeDeliverSubtitles(now);
-                    if (now - lastPublish >= 500) {
-                        lastPublish = now;
-                        notifyState(null);
-                    }
+                }
+                if (now - lastPublish >= 500) {
+                    lastPublish = now;
+                    notifyState(null);
                 }
             } catch (Throwable t) {
-                fail("Torrent error: " + t.getMessage());
+                failLater("Torrent error: " + t.getMessage());
                 break;
             }
             try {
@@ -561,12 +705,28 @@ public final class TorrentStreamer {
         if (!files.isEmpty() && l != null) main.post(() -> l.onSubtitles(files));
     }
 
-    private int bufferPercent(TorrentHandle h) {
-        int total = lastPiece - firstPiece + 1;
-        if (total <= 0) return 0;
+    /** Pieces of the selected file that have arrived. */
+    private int haveCount(TorrentHandle h) {
         int have = 0;
         for (int p = firstPiece; p <= lastPiece; p++) if (h.havePiece(p)) have++;
-        return (int) ((long) have * 100 / total);
+        return have;
+    }
+
+    /** Buffering progress: how much of the start and end windows (what playback needs first) has arrived. */
+    private int bufferPercent() {
+        int count = lastPiece - firstPiece + 1;
+        if (count <= 0) return 0;
+        int start = Math.max(1, (int) Math.min(count, (START_BYTES + pieceLength - 1) / pieceLength));
+        int tail = Math.max(1, (int) Math.min(count, (TAIL_BYTES + pieceLength - 1) / pieceLength));
+        int needed = Math.min(count, start + tail);
+        TorrentHandle h = handle;
+        if (h == null) return 0;
+        int got = 0;
+        for (int p = firstPiece; p < firstPiece + start; p++) if (h.havePiece(p)) got++;
+        for (int p = Math.max(firstPiece + start, lastPiece - tail + 1); p <= lastPiece; p++) {
+            if (h.havePiece(p)) got++;
+        }
+        return Math.min(100, (int) ((long) got * 100 / Math.max(1, needed)));
     }
 
     private boolean bufferReady(TorrentHandle h) {
@@ -584,6 +744,7 @@ public final class TorrentStreamer {
     private String state() {
         if (!lastError.isEmpty()) return "error";
         if (choicePending) return "choosing";
+        if (bufferPending && checkingFiles) return "checking";
         if (bufferPending) return "buffering";
         if (currentUrl != null) return "streaming";
         return "metadata";
@@ -600,23 +761,32 @@ public final class TorrentStreamer {
         notifyState(null);
     }
 
+    /**
+     * Reports an error and ends the current torrent. Safe from any thread except libtorrent's alert thread
+     * (use {@link #failLater}); the session itself is always stopped on CTRL.
+     */
     private void fail(String message) {
-        if (!running && !message.isEmpty()) return;
+        if (!running) return;
         running = false;
+        choicePending = false;
+        bufferPending = false;
         lastError = message == null || message.isEmpty() ? "Torrent playback failed" : message;
-        if (server != null) server.stop();
+        RangeServer srv = server;
         server = null;
+        if (srv != null) srv.stop();
         closeChannel();
-        TorrentHandle h = handle;
-        if (h != null && h.isValid()) h.clearPieceDeadlines();
         notifyState("error");
         final Listener l = listener;
         final String m = lastError;
         if (l != null) main.post(() -> l.onError(m));
-        stopSession();
-        session = null;
-        handle = null;
-        info = null;
+        final SessionManager sm = session;
+        CTRL.execute(() -> {
+            if (session != sm) return; // a newer torrent already replaced it (stopNow handled this one)
+            stopSession();
+            session = null;
+            handle = null;
+            info = null;
+        });
     }
 
     /** Stops everything but keeps the downloaded files. Serialised through CTRL when called publicly. */
@@ -728,10 +898,9 @@ public final class TorrentStreamer {
             if (n > 0) {
                 done += n;
                 retries = 0;
-            } else if (n < 0) {
-                throw new IOException("Unexpected end of file");
-            } else if (++retries > 40) {
-                throw new IOException("Downloaded data isn't readable yet");
+            } else if (++retries > 100) {
+                // n == 0, or -1 while libtorrent hasn't grown the file to its full size on disk yet
+                throw new IOException(n < 0 ? "Unexpected end of file" : "Downloaded data isn't readable yet");
             } else {
                 try {
                     Thread.sleep(50);
@@ -772,8 +941,10 @@ public final class TorrentStreamer {
         }
 
         int start() throws IOException {
+            // Bind exactly the address the URL names. On Android getLoopbackAddress() is ::1 (IPv6), so a
+            // server bound there refuses VLC's connection to 127.0.0.1 and every torrent fails to open.
             server = new ServerSocket();
-            server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
+            server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 16);
             active = true;
             Thread t = new Thread(() -> {
                 while (active) {
@@ -969,18 +1140,28 @@ public final class TorrentStreamer {
             String host = spec.substring(0, colon);
             String port = spec.substring(colon + 1);
             try {
+                // prefer IPv4: many home networks have no working IPv6 route
+                java.net.InetAddress pick = null;
                 for (java.net.InetAddress a : Net.resolve(host)) {
                     if (a.isAnyLocalAddress() || a.isLoopbackAddress()) continue;
-                    String ip = a.getHostAddress();
+                    if (a instanceof java.net.Inet4Address) {
+                        pick = a;
+                        break;
+                    }
+                    if (pick == null) pick = a;
+                }
+                if (pick != null) {
+                    String ip = pick.getHostAddress();
                     if (ip.indexOf('%') > 0) ip = ip.substring(0, ip.indexOf('%'));
+                    if (ip.indexOf(':') >= 0) ip = "[" + ip + "]"; // IPv6 literal
                     nodes.add(ip + ":" + port);
-                    break;
                 }
             } catch (Exception ignored) {
-                // leave this bootstrap node out; libtorrent still has the other ones
+                // leave this IP out; the host name below still lets libtorrent try system DNS
             }
         }
-        if (nodes.isEmpty()) return null;
+        // Keep the names too, so system DNS is still tried when DoH is unreachable.
+        for (String spec : hosts) nodes.add(spec);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < nodes.size(); i++) {
             if (i > 0) sb.append(',');

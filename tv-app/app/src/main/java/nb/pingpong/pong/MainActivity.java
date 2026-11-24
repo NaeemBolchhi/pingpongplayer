@@ -83,7 +83,7 @@ public class MainActivity extends FragmentActivity {
     private View errorOverlay;
     private TextView tvErrorUrl, tvErrorDetail;
     private volatile boolean errorShown = false;
-    private boolean loaded = false;
+    private volatile boolean loaded = false; // read by the status thread too
     /** 0 = normal settings, 1 = HLS fallback settings (tried automatically once before showing the error). */
     private int loadAttempt = 0;
     private HlsProxy hlsProxy;
@@ -117,6 +117,9 @@ public class MainActivity extends FragmentActivity {
     private TorrentStreamer torrents;
     private volatile TorrentStreamer.Snapshot lastTorrent;
     private volatile boolean currentIsTorrent;
+    private volatile String torrentMagnet;   // the magnet of the torrent that is loaded
+    /** The video played to the end; play/OK then starts it again from the beginning. */
+    private volatile boolean ended;
     private String torrentUnavailable = "Torrent playback isn't available on this TV";
 
     // subtitle style / display settings (persisted)
@@ -257,6 +260,13 @@ public class MainActivity extends FragmentActivity {
                         if (currentIsTorrent) addTorrentSubtitles(files);
                     });
                 }
+
+                @Override
+                public void onLoading(String title) {
+                    runOnUiThread(() -> {
+                        if (currentIsTorrent) showTorrentLoading(title);
+                    });
+                }
             });
         } catch (TorrentStreamer.Unavailable e) {
             torrents = null;
@@ -264,29 +274,67 @@ public class MainActivity extends FragmentActivity {
         }
     }
 
+    /** Another video of the loaded torrent is being prepared: drop the old one and show the loading screen. */
+    private void showTorrentLoading(String title) {
+        handler.removeCallbacks(loadTimeout);
+        try {
+            if (mediaPlayer != null) mediaPlayer.stop();
+        } catch (Exception ignored) {
+        }
+        loaded = false;
+        ended = false;
+        loadAttempt = 0;
+        subtitleFiles.clear();
+        hideError();
+        if (torrentMagnet != null) currentUrl = torrentMagnet; // "opening" for the phone until it's ready
+        if (title != null && !title.isEmpty()) currentTitle = title;
+        tvLoadingStatus.setText(torrentMessage(lastTorrent, false));
+        idleContainer.setVisibility(View.GONE);
+        hideControls();
+        showLoading();
+    }
+
+    /** True when a player event belongs to a torrent stream that has since been replaced. */
+    private boolean staleTorrentEvent() {
+        if (!currentIsTorrent || torrents == null || currentUrl == null) return false;
+        if (currentUrl.startsWith("magnet:")) return true; // nothing of ours is in the player yet
+        return !currentUrl.equals(torrents.streamUrl());
+    }
+
     private void updateTorrentUi(TorrentStreamer.Snapshot s) {
         if (s == null) return;
+        // While the video is already in VLC's hands, currentUrl is the local stream; keep the file name.
         if (s.title != null && !s.title.isEmpty()) currentTitle = s.title;
         tvLoadingTitle.setText(currentTitle);
-        String text;
-        switch (s.state) {
+        tvLoadingStatus.setText(torrentMessage(s, false));
+    }
+
+    /**
+     * One line describing the torrent's progress. The TV's loading screen shows it and the phone receives the
+     * same text in its status, so both always say the same thing.
+     */
+    static String torrentMessage(TorrentStreamer.Snapshot s, boolean playing) {
+        if (s == null) return "Loading torrent…";
+        String peers = s.peers == 1 ? "1 peer" : s.peers + " peers";
+        String state = s.state == null ? "" : s.state;
+        switch (state) {
             case "metadata":
-                text = "Looking for peers…";
-                break;
+                return s.peers > 0 ? "Loading torrent… getting file list from " + peers
+                        : "Loading torrent… looking for peers";
             case "choosing":
-                text = "Choose a video on the phone";
-                break;
+                return "Torrent loaded · choose a video on the phone";
+            case "checking":
+                return "Freeing space… checking the downloaded videos";
             case "buffering":
-                text = "Buffering " + s.progress + "% · " + s.peers + " peers · " + humanRate(s.rate);
-                break;
+                return "Buffering " + s.progress + "% · " + peers + " · " + humanRate(s.rate);
             case "streaming":
-                text = s.progress + "% · " + s.peers + " peers · " + humanRate(s.rate);
-                break;
+                return playing ? s.progress + "% downloaded · " + peers + " · " + humanRate(s.rate)
+                        : "Starting video · " + peers + " · " + humanRate(s.rate);
+            case "error":
+                return s.error == null || s.error.isEmpty() ? "Torrent playback failed" : s.error;
             default:
-                text = s.error == null || s.error.isEmpty() ? "Loading…" : s.error;
-                break;
+                return "Loading torrent…";
         }
-        tvLoadingStatus.setText(text);
     }
 
     private static String humanRate(int bytes) {
@@ -544,8 +592,17 @@ public class MainActivity extends FragmentActivity {
     private void onPlayerEvent(final MediaPlayer.Event event) {
         runOnUiThread(() -> {
             int t = event.type;
-            if (t == MediaPlayer.Event.EndReached && currentIsTorrent) {
-                endSession(); // playback finished: stop seeding and go back to the idle screen
+            if ((t == MediaPlayer.Event.EndReached || t == MediaPlayer.Event.EncounteredError)
+                    && staleTorrentEvent()) {
+                return; // the old stream of a torrent switch closing down
+            }
+            if (t == MediaPlayer.Event.EndReached) {
+                // Keep everything (a torrent stays loaded) so play replays it or the phone picks another.
+                ended = true;
+                handler.removeCallbacks(loadTimeout);
+                hideLoading();
+                updatePlayIcon(false);
+                showControls(true);
                 return;
             }
             if (t == MediaPlayer.Event.EncounteredError) {
@@ -575,7 +632,7 @@ public class MainActivity extends FragmentActivity {
     private final Runnable loadTimeout = new Runnable() {
         @Override
         public void run() {
-            if (loaded || currentUrl == null) return;
+            if (loaded || currentUrl == null || staleTorrentEvent()) return;
             if (loadAttempt == 0 && currentUrl.startsWith("http")) {
                 loadAttempt = 1;
                 startMedia(currentUrl, 0, true);
@@ -649,6 +706,8 @@ public class MainActivity extends FragmentActivity {
         hideError();
         if (currentIsTorrent && torrents != null) torrents.stop(); // stop seeding, keep the files
         currentIsTorrent = false;
+        torrentMagnet = null;
+        ended = false;
         lastTorrent = null;
         handler.removeCallbacks(loadTimeout);
         try {
@@ -827,12 +886,27 @@ public class MainActivity extends FragmentActivity {
             // A new video load clears the old downloads, torrent or not.
             if (currentIsTorrent) torrents.stop();
             TorrentStreamer.clear(this);
+            // Stop whatever was playing: otherwise it keeps playing behind the loading screen, and its
+            // end/error events or its pending load timeout would be taken for the torrent's.
+            handler.removeCallbacks(loadTimeout);
+            try {
+                if (mediaPlayer != null) mediaPlayer.stop();
+            } catch (Exception ignored) {
+            }
+            loaded = false;
+            ended = false;
             currentIsTorrent = true;
+            torrentMagnet = u;
             lastTorrent = null;
             currentUrl = u;
-            String dn = Uri.parse(u).getQueryParameter("dn");
+            String dn = null;
+            try {
+                dn = Uri.parse(u).getQueryParameter("dn");
+            } catch (Exception ignored) {
+            }
             currentTitle = dn == null || dn.isEmpty() ? "Torrent" : dn;
-            tvLoadingStatus.setText("Looking for peers…");
+            tvLoadingStatus.setText("Loading torrent…");
+            idleContainer.setVisibility(View.GONE);
             showLoading();
             hideControls();
             torrents.play(u);
@@ -842,6 +916,7 @@ public class MainActivity extends FragmentActivity {
             torrents.stop();
             TorrentStreamer.clear(this);
             currentIsTorrent = false;
+            torrentMagnet = null;
             lastTorrent = null;
         }
         currentUrl = u;
@@ -894,6 +969,7 @@ public class MainActivity extends FragmentActivity {
             }
             if (startMs > 1000) media.addOption(":start-time=" + (startMs / 1000.0));
             hideError();
+            ended = false;
             mediaPlayer.setMedia(media);
             media.release();
             mediaPlayer.play();
@@ -925,8 +1001,44 @@ public class MainActivity extends FragmentActivity {
         return url;
     }
 
+    /** Starts the current video again from the beginning (after it played to the end). */
+    private void replay() {
+        if (mediaPlayer == null || currentUrl == null) return;
+        if (currentIsTorrent && currentUrl.startsWith("magnet:")) return; // still being prepared
+        final List<File> subs = new ArrayList<>(subtitleFiles);
+        loadAttempt = 0;
+        startMedia(currentUrl, 0, true);
+        if (!subs.isEmpty()) {
+            // a new Media loses its subtitle slaves
+            handler.postDelayed(() -> {
+                for (File f : subs) addSubtitleFile(f, false, true);
+            }, 1000);
+        }
+        updatePlayIcon(true);
+    }
+
+    private boolean isEnded() {
+        if (ended) return true;
+        try {
+            return mediaPlayer != null && mediaPlayer.getPlayerState() == Media.State.Ended;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Play (replaying a video that ended) or pause. */
+    private void play() {
+        if (mediaPlayer == null) return;
+        if (isEnded()) replay();
+        else if (!mediaPlayer.isPlaying()) mediaPlayer.play();
+    }
+
     private void togglePlayPause() {
         if (mediaPlayer == null) return;
+        if (isEnded()) {
+            replay();
+            return;
+        }
         boolean wasPlaying = mediaPlayer.isPlaying();
         if (wasPlaying) mediaPlayer.pause();
         else mediaPlayer.play();
@@ -1227,7 +1339,7 @@ public class MainActivity extends FragmentActivity {
                 showControls(!controlsVisible);
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY:
-                if (mediaPlayer != null && !mediaPlayer.isPlaying()) mediaPlayer.play();
+                play();
                 updatePlayIcon(true);
                 showControls(!controlsVisible);
                 return true;
@@ -1398,8 +1510,8 @@ public class MainActivity extends FragmentActivity {
                     loadAttempt = 0;
                     if (currentIsTorrent && currentUrl.startsWith("magnet:")) playMedia(currentUrl);
                     else startMedia(currentUrl, 0, true); // retry the link that failed
-                } else if (mp != null && !mp.isPlaying()) {
-                    mp.play();
+                } else {
+                    play(); // replays a video that played to the end
                 }
                 break;
             case "RENAME":
@@ -1477,6 +1589,11 @@ public class MainActivity extends FragmentActivity {
         }
         MediaPlayer mp = mediaPlayer;
         if (mp == null || currentUrl == null) return s;
+        if (currentIsTorrent && currentUrl.startsWith("magnet:")) {
+            // The torrent engine is still preparing; the player holds nothing (or the previous video).
+            s.state = "opening";
+            return s;
+        }
         try {
             int st = mp.getPlayerState();
             if (st == Media.State.Opening) s.state = "opening";
@@ -1503,8 +1620,16 @@ public class MainActivity extends FragmentActivity {
     }
 
     private void fillTorrentStatus(TvStatus s) {
+        if (!currentIsTorrent) return;
         TorrentStreamer.Snapshot ts = lastTorrent;
-        if (!currentIsTorrent || ts == null) return;
+        if (ts == null) {
+            // The engine hasn't reported yet (it is still shutting down the previous torrent): say it's loading.
+            s.torrentState = "metadata";
+            s.torrentTitle = currentTitle;
+            s.torrentMessage = "Loading torrent…";
+            return;
+        }
+        s.torrentMessage = torrentMessage(ts, loaded);
         s.torrentState = ts.state == null ? "" : ts.state;
         s.torrentTitle = ts.title == null ? "" : ts.title;
         s.torrentSelected = ts.selected;

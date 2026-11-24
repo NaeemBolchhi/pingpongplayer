@@ -46,12 +46,13 @@ public class TvStatus {
     public boolean hdr = false;
 
     // torrent playback (empty when no magnet is loaded)
-    public String torrentState = ""; // metadata, choosing, buffering, streaming, error
+    public String torrentState = ""; // metadata, choosing, checking, buffering, streaming, error
     public String torrentTitle = "";
     public int torrentSelected = -1;
     public int torrentPeers;
     public int torrentRate;          // bytes per second
     public int torrentProgress;      // 0..100 of the selected file
     public String torrentError = "";
+    public String torrentMessage = ""; // ready-made status line, the same text the TV shows
     public List<TorrentFile> torrentFiles = new ArrayList<>();
 }

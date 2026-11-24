@@ -15,6 +15,7 @@ import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.GridLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -27,6 +28,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
+import com.google.android.material.progressindicator.LinearProgressIndicator;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.android.material.tabs.TabLayout;
@@ -94,7 +96,12 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     private MaterialButtonToggleGroup outlineGroup;
     private EditText etQuery, etLang;
     private LinearLayout results, swatches;
-    private View paneVideo, paneAudio, paneSubs, subFind, subStyle, subSync;
+    private View paneVideo, paneAudio, paneSubs, panePlaylist, subFind, subStyle, subSync;
+    private TabLayout tabs;
+    private LinearProgressIndicator torrentProgress;
+    private LinearLayout playlistRows;
+    private TextView tvPlaylistHeader;
+    private String playlistSig = "";
     private final List<View> swatchViews = new ArrayList<>();
     private final List<MaterialButton> gridButtons = new ArrayList<>();
     private final List<View> controls = new ArrayList<>();
@@ -107,15 +114,23 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     private String torrentTitleSeen = "";
     private boolean torrentPromptShown = false;
 
+    private static final int TAB_PLAYLIST = 3;
+    private static final String[] TAB_NAMES = {"Video", "Audio", "Subtitles", "Playlist"};
+
+    /** Where the Playlist tab's rows come from. */
+    private static final int MODE_SINGLE = 0, MODE_LOCAL = 1, MODE_TORRENT = 2;
+
     private static final class Row {
         final String name;
         final int subs;
         final int index;
+        final long size; // bytes, 0 = unknown
 
-        Row(String name, int subs, int index) {
+        Row(String name, int subs, int index, long size) {
             this.name = name;
             this.subs = subs;
             this.index = index;
+            this.size = size;
         }
     }
 
@@ -202,6 +217,11 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         paneVideo = findViewById(R.id.pane_video);
         paneAudio = findViewById(R.id.pane_audio);
         paneSubs = findViewById(R.id.pane_subs);
+        panePlaylist = findViewById(R.id.pane_playlist);
+        tabs = findViewById(R.id.tabs);
+        torrentProgress = findViewById(R.id.torrent_progress);
+        playlistRows = findViewById(R.id.playlist_rows);
+        tvPlaylistHeader = findViewById(R.id.tv_playlist_header);
         subFind = findViewById(R.id.sub_find);
         subStyle = findViewById(R.id.sub_style);
         subSync = findViewById(R.id.sub_sync);
@@ -225,10 +245,6 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         toolbar.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == R.id.action_rename) {
                 showRenameDialog();
-                return true;
-            }
-            if (item.getItemId() == R.id.action_playlist) {
-                showPlaylist();
                 return true;
             }
             return false;
@@ -272,7 +288,11 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     }
 
     private void setupTabs() {
-        TabLayout tabs = findViewById(R.id.tabs);
+        // The tabs show icons only; the names are kept for TalkBack and as long-press tooltips.
+        for (int i = 0; i < tabs.getTabCount() && i < TAB_NAMES.length; i++) {
+            TabLayout.Tab t = tabs.getTabAt(i);
+            if (t != null) t.setContentDescription(TAB_NAMES[i]);
+        }
         tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override
             public void onTabSelected(TabLayout.Tab tab) {
@@ -280,6 +300,8 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
                 paneVideo.setVisibility(p == 0 ? View.VISIBLE : View.GONE);
                 paneAudio.setVisibility(p == 1 ? View.VISIBLE : View.GONE);
                 paneSubs.setVisibility(p == 2 ? View.VISIBLE : View.GONE);
+                panePlaylist.setVisibility(p == TAB_PLAYLIST ? View.VISIBLE : View.GONE);
+                if (p == TAB_PLAYLIST) refreshPlaylist();
             }
 
             @Override
@@ -454,7 +476,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             return;
         }
         send("PLAY:" + url);
-        snack("Link sent to TV");
+        snack(url.regionMatches(true, 0, "magnet:", 0, 7) ? "Magnet sent to TV · loading torrent…" : "Link sent to TV");
     }
 
     private void pasteSubtitle() {
@@ -496,16 +518,22 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         }
     }
 
+    /** The torrent status line. The TV writes it (it runs the engine); older TVs get a local fallback. */
     private String torrentLabel(TvStatus s) {
         String st = s.torrentState;
         if (st == null || st.isEmpty()) return "";
+        if (st.equals("choosing")) return "Torrent loaded · choose a video in the playlist";
+        if (s.torrentMessage != null && !s.torrentMessage.isEmpty()) return s.torrentMessage;
         StringBuilder b = new StringBuilder("Torrent · ");
         switch (st) {
             case "metadata":
-                b.append("finding files");
+                b.append("loading torrent…");
                 break;
             case "choosing":
-                b.append("choose a video below");
+                b.append("choose a video in the playlist");
+                break;
+            case "checking":
+                b.append("checking downloaded videos");
                 break;
             case "buffering":
                 b.append("buffering ").append(s.torrentProgress).append('%');
@@ -525,6 +553,15 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         return b.toString();
     }
 
+    /** True while the TV is still getting a torrent ready (before the video itself is playing). */
+    private static boolean torrentLoading(TvStatus s) {
+        String st = s.torrentState == null ? "" : s.torrentState;
+        if (st.equals("metadata") || st.equals("checking") || st.equals("buffering")) return true;
+        String ps = s.state == null ? "" : s.state;
+        return st.equals("streaming") && (ps.equals("opening") || ps.equals("buffering"));
+    }
+
+    /** A multi-video torrent waits for a pick: bring up the Playlist tab once per torrent. */
     private void maybeShowTorrentPlaylist(TvStatus s) {
         String title = s.torrentTitle == null ? "" : s.torrentTitle;
         if (!title.equals(torrentTitleSeen)) {
@@ -535,7 +572,9 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         if (!"choosing".equals(s.torrentState)) return;
         if (torrentRows(s).size() <= 1) return;
         torrentPromptShown = true;
-        showPlaylist();
+        TabLayout.Tab t = tabs.getTabAt(TAB_PLAYLIST);
+        if (t != null && !t.isSelected()) t.select();
+        snack("Choose a video from the torrent");
     }
 
     private List<Row> torrentRows(TvStatus s) {
@@ -543,55 +582,115 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         if (s.torrentFiles == null) return rows;
         for (TvStatus.TorrentFile f : s.torrentFiles) {
             if (f.name != null && MediaFiles.isVideo(f.name)) {
-                rows.add(new Row(f.name, f.subtitles, f.index));
+                rows.add(new Row(f.name, f.subtitles, f.index, f.size));
             }
         }
         return rows;
     }
 
-    /** Shows the local share's playlist, or the torrent's video list sent by the TV. */
-    private void showPlaylist() {
+    /**
+     * Fills the Playlist tab: the torrent's videos (sent by the TV), the videos shared from this phone, or
+     * otherwise just the one video that is playing. Rebuilt only when something in it changed.
+     */
+    private void refreshPlaylist() {
+        final TvStatus s = last;
         final List<Row> rows = new ArrayList<>();
-        final boolean torrentMode;
-        int current = -1;
+        final int mode;
+        int current;
+        String header;
+        String message = null;
+        String tState = s.torrentState == null ? "" : s.torrentState;
         List<CastService.Entry> local = CastService.playlist();
-        if (local != null && !local.isEmpty()) {
-            torrentMode = false;
+        if (!tState.isEmpty()) {
+            mode = MODE_TORRENT;
+            current = s.torrentSelected;
+            rows.addAll(torrentRows(s));
+            header = "Videos in this torrent";
+            if (rows.isEmpty()) {
+                if (tState.equals("error")) {
+                    message = "The torrent couldn't be loaded.";
+                } else {
+                    message = "Loading torrent… the list appears as soon as the TV has the torrent's file list.";
+                }
+            }
+        } else if (local != null && !local.isEmpty()) {
+            mode = MODE_LOCAL;
             current = CastService.currentIndex();
             for (int i = 0; i < local.size(); i++) {
                 CastService.Entry e = local.get(i);
-                rows.add(new Row(e.name, e.subtitles, i));
+                rows.add(new Row(e.name, e.subtitles, i, 0));
             }
+            header = "Shared from this phone";
         } else {
-            torrentMode = true;
-            current = last.torrentSelected;
-            rows.addAll(torrentRows(last));
+            // A single link: the playlist is just that one video.
+            mode = MODE_SINGLE;
+            current = 0;
+            header = "Playlist";
+            String title = s.title == null ? "" : s.title.trim();
+            if (connected && !title.isEmpty()) rows.add(new Row(title, 0, 0, 0));
+            else message = connected ? "Nothing is playing on the TV." : "Waiting for the TV app…";
         }
-        if (rows.isEmpty()) {
-            snack("No playlist for this video");
+
+        StringBuilder sig = new StringBuilder().append(mode).append('|').append(current).append('|')
+                .append(connected).append('|').append(message).append('|').append(tState).append('|');
+        for (Row r : rows) sig.append(r.index).append(':').append(r.name).append(':').append(r.subs).append('/');
+        if (sig.toString().equals(playlistSig)) return;
+        playlistSig = sig.toString();
+
+        tvPlaylistHeader.setText(header);
+        playlistRows.removeAllViews();
+        if (message != null) {
+            TextView t = new TextView(this);
+            t.setText(message);
+            t.setTextSize(14);
+            t.setTextColor(color(R.color.on_surface_variant));
+            t.setPadding(dp(4), dp(8), dp(4), dp(8));
+            playlistRows.addView(t);
             return;
         }
-        CharSequence[] items = new CharSequence[rows.size()];
+        LayoutInflater inf = LayoutInflater.from(this);
         for (int i = 0; i < rows.size(); i++) {
-            Row r = rows.get(i);
-            String mark = r.index == current ? "▶ " : "";
-            String subs = r.subs == 0 ? "" : "  ·  " + r.subs + " sub" + (r.subs == 1 ? "" : "s");
-            items[i] = mark + (i + 1) + ". " + r.name + subs;
-        }
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(torrentMode ? "Torrent videos" : "Playlist")
-                .setItems(items, (dialog, which) -> {
-                    Row r = rows.get(which);
-                    if (torrentMode) {
+            final Row r = rows.get(i);
+            final boolean isCurrent = r.index == current;
+            View row = inf.inflate(R.layout.item_playlist, playlistRows, false);
+            ((TextView) row.findViewById(R.id.number)).setText(String.valueOf(i + 1));
+            ((TextView) row.findViewById(R.id.name)).setText(r.name);
+            TextView detail = row.findViewById(R.id.detail);
+            List<String> bits = new ArrayList<>();
+            if (isCurrent && rows.size() > 1) bits.add(mode == MODE_TORRENT && torrentLoading(s) ? "Loading" : "Playing");
+            if (r.size > 0) bits.add(humanSize(r.size));
+            if (r.subs > 0) bits.add(r.subs + (r.subs == 1 ? " subtitle" : " subtitles"));
+            if (!bits.isEmpty()) {
+                detail.setText(android.text.TextUtils.join(" · ", bits));
+                detail.setVisibility(View.VISIBLE);
+            }
+            ImageView now = row.findViewById(R.id.now);
+            now.setVisibility(isCurrent ? View.VISIBLE : View.GONE);
+            com.google.android.material.card.MaterialCardView card = (com.google.android.material.card.MaterialCardView) row;
+            card.setCardBackgroundColor(color(isCurrent ? R.color.secondary_container : R.color.surface_container));
+            boolean pickable = mode != MODE_SINGLE && !isCurrent && connected;
+            row.setAlpha(connected ? 1f : DISABLED_ALPHA);
+            if (pickable) {
+                row.setOnClickListener(v -> {
+                    if (mode == MODE_TORRENT) {
                         send("TORRENT_FILE:" + r.index);
                         snack("Loading " + r.name);
                     } else {
                         CastService.select(r.index);
                         snack("Playing " + r.name);
                     }
-                })
-                .setNegativeButton("Close", null)
-                .show();
+                });
+            } else {
+                row.setClickable(false);
+            }
+            playlistRows.addView(row);
+        }
+    }
+
+    private static String humanSize(long bytes) {
+        if (bytes >= 1024L * 1024 * 1024) return String.format(Locale.US, "%.1f GB", bytes / 1073741824.0);
+        if (bytes >= 1024L * 1024) return String.format(Locale.US, "%.0f MB", bytes / 1048576.0);
+        return Math.max(1, bytes / 1024) + " KB";
     }
 
     private void showRenameDialog() {
@@ -683,9 +782,6 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         if (toolbar.getMenu().findItem(R.id.action_rename) != null) {
             toolbar.getMenu().findItem(R.id.action_rename).setEnabled(enabled);
         }
-        if (toolbar.getMenu().findItem(R.id.action_playlist) != null) {
-            toolbar.getMenu().findItem(R.id.action_playlist).setEnabled(enabled);
-        }
         for (int i = 0; i < results.getChildCount(); i++) {
             View row = results.getChildAt(i);
             View send = row.findViewById(R.id.send);
@@ -713,6 +809,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             styleSig = "";
         } // re-read the TV's settings after reconnecting
         setConnectedUi(isConnected);
+        refreshPlaylist();
     }
 
     @Override
@@ -736,10 +833,18 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         }
         String torrent = torrentLabel(s);
         if (!torrent.isEmpty()) {
-            tvState.setTextColor(color(R.color.on_surface_variant));
-            tvState.setText(torrent);
+            boolean failed = "error".equals(s.torrentState);
+            tvState.setTextColor(color(failed ? R.color.error : R.color.on_surface_variant));
+            boolean watching = "streaming".equals(s.torrentState)
+                    && (state.equals("playing") || state.equals("paused") || state.equals("ended"));
+            tvState.setText(watching ? stateLabel(state, s.rate) + " · " + torrent : torrent);
+            if ((s.title == null || s.title.isEmpty()) && s.torrentTitle != null && !s.torrentTitle.isEmpty()) {
+                tvTitle.setText(s.torrentTitle);
+            }
         }
+        torrentProgress.setVisibility(connected && torrentLoading(s) ? View.VISIBLE : View.GONE);
         maybeShowTorrentPlaylist(s);
+        refreshPlaylist();
         btnPlay.setIcon(ContextCompat.getDrawable(this, playing ? R.drawable.ic_pause : R.drawable.ic_play));
 
         seek.setEnabled(connected && s.length > 0 && s.seekable);
@@ -806,7 +911,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             case "stopped":
                 return "Stopped";
             case "ended":
-                return "Ended";
+                return "Ended · press play to watch again";
             default:
                 return "Ready";
         }

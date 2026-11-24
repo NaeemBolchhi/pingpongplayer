@@ -99,6 +99,18 @@
                         style="@style/Ping.Sup"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
+
+                    <!-- shown while the TV is loading a torrent -->
+                    <com.google.android.material.progressindicator.LinearProgressIndicator
+                        android:id="@+id/torrent_progress"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:indeterminate="true"
+                        android:visibility="gone"
+                        app:indicatorColor="@color/primary"
+                        app:trackColor="@color/secondary_container"
+                        app:trackCornerRadius="2dp" />
                 </LinearLayout>
 
                 <com.google.android.material.button.MaterialButton
@@ -215,30 +227,37 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
+    <!-- icon-only tabs: video, audio, subtitles, playlist (descriptions are set in code) -->
     <com.google.android.material.tabs.TabLayout
         android:id="@+id/tabs"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
         android:background="@color/surface"
+        app:tabIconTint="@color/tab_icon"
         app:tabIndicatorColor="@color/primary"
-        app:tabSelectedTextColor="@color/primary"
-        app:tabTextColor="@color/on_surface_variant">
+        app:tabInlineLabel="false"
+        app:tabMode="fixed">
 
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Video" />
+            android:icon="@drawable/ic_tab_video" />
 
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Audio" />
+            android:icon="@drawable/ic_tab_audio" />
 
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Subtitles" />
+            android:icon="@drawable/ic_tab_subtitles" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:icon="@drawable/ic_tab_playlist" />
     </com.google.android.material.tabs.TabLayout>
 
     <androidx.core.widget.NestedScrollView
@@ -823,6 +842,28 @@
                         android:layout_marginTop="8dp"
                         android:text="Reset" />
                 </LinearLayout>
+            </LinearLayout>
+
+            <!-- ============================ PLAYLIST ============================ -->
+            <LinearLayout
+                android:id="@+id/pane_playlist"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tv_playlist_header"
+                    style="@style/Ping.Cap"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:id="@+id/playlist_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
             </LinearLayout>
         </FrameLayout>
     </androidx.core.widget.NestedScrollView>
