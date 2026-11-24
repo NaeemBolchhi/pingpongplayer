@@ -348,7 +348,8 @@ public class CastService extends Service {
         for (Prepared ps : s.subs) {
             urls.add(baseUrl + "/" + ps.entry.token + "/" + Uri.encode(ps.name));
         }
-        handler.post(() -> live(g, index, s.name(), videoUrl, urls));
+        final String serveName = s.name();
+        handler.post(() -> live(g, index, serveName, videoUrl, urls));
     }
 
     /** Main thread: the server is up, tell the TV. */
