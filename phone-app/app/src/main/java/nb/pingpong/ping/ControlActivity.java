@@ -321,13 +321,29 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         // the content scrolls on under the bar; leave room so its end can scroll clear of it
         scroll.setPadding(0, 0, 0, nav.reservedHeight());
         nav.select(tab);
-        showPane(tab);
+        showPane(tab, false);
     }
 
     private void showPane(int index) {
+        showPane(index, true);
+    }
+
+    /** Shows one tab's content; when animated it fades in and rises a little, in step with the bar. */
+    private void showPane(int index, boolean animate) {
         for (int i = 0; i < panes.length; i++) panes[i].setVisibility(i == index ? View.VISIBLE : View.GONE);
         scroll.scrollTo(0, 0);
         if (index == TAB_PLAYLIST) refreshPlaylist();
+        View pane = panes[index];
+        pane.animate().cancel();
+        if (animate) {
+            pane.setAlpha(0f);
+            pane.setTranslationY(dp(16));
+            pane.animate().alpha(1f).translationY(0f).setDuration(260)
+                    .setInterpolator(new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)).start();
+        } else {
+            pane.setAlpha(1f);
+            pane.setTranslationY(0f);
+        }
     }
 
     private void selectTab(int index) {
