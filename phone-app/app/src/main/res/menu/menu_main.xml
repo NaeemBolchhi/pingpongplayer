@@ -6,4 +6,12 @@
         android:icon="@drawable/ic_refresh"
         android:title="Scan again"
         app:showAsAction="always" />
+    <item
+        android:id="@+id/action_updates"
+        android:title="Check for updates"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_settings"
+        android:title="Settings"
+        app:showAsAction="never" />
 </menu>

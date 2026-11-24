@@ -8,6 +8,7 @@ public class TvStatus {
     public static class Track {
         public int id;
         public String name;
+        public String source = ""; // subtitles: "torrent", "phone", "video"
         public Track(int id, String name) {
             this.id = id;
             this.name = name;
@@ -54,5 +55,11 @@ public class TvStatus {
     public int torrentProgress;      // 0..100 of the selected file
     public String torrentError = "";
     public String torrentMessage = ""; // ready-made status line, the same text the TV shows
+    public int torrentFileProgress;    // 0..1000 of the playing file downloaded
+
+    // the videos of a phone's share (SHARE_LIST), and a pick made on the TV for the phone to carry out
+    public String shareUrl = "";
+    public int shareSelect = -1;
+    public int shareSelectSeq;
     public List<TorrentFile> torrentFiles = new ArrayList<>();
 }

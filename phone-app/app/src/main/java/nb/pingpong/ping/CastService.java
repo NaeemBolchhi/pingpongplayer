@@ -24,6 +24,9 @@ import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -377,14 +380,68 @@ public class CastService extends Service {
                     if (!subUrls.isEmpty() && !subSent && videoName.equals(st.title) && "playing".equals(st.state)) {
                         sendSubtitles();
                     }
+                    onTvShareStatus(st);
                 }
             });
             client.start();
             handler.postDelayed(giveUp, FIRST_CONNECT_MS);
         }
         sendUdp("PLAY:" + videoUrl);
+        currentUrl = videoUrl;
+        sendShareList();
         handler.removeCallbacks(subFallback);
         if (!subUrls.isEmpty()) handler.postDelayed(subFallback, SUB_FALLBACK_MS);
+    }
+
+    // ------------------------------------------------------ playlist on the TV
+
+    /** The URL the TV was last told to play for this share. */
+    private String currentUrl = "";
+    private int lastSelectSeq = -1; // -1 until the first status (a pick made before we joined is ignored)
+    private long lastListSent;
+
+    /**
+     * Gives the TV the names of this share's videos, so its own Playlist panel can offer them. The list belongs
+     * to the URL that is playing; the TV forgets it when anything else is played.
+     */
+    private void sendShareList() {
+        if (currentUrl.isEmpty() || playlist.size() < 2) return;
+        JsonArray items = new JsonArray();
+        int budget = 6500; // stay well inside one UDP datagram
+        for (Play p : playlist) {
+            String name = p.name();
+            if (name.length() > 120) name = name.substring(0, 117) + "…";
+            budget -= name.length() * 3 + 24;
+            if (budget < 0) break;
+            JsonObject o = new JsonObject();
+            o.addProperty("name", name);
+            o.addProperty("subs", p.subs.size());
+            items.add(o);
+        }
+        JsonObject o = new JsonObject();
+        o.addProperty("url", currentUrl);
+        o.addProperty("index", selectedIndex);
+        o.add("items", items);
+        lastListSent = android.os.SystemClock.elapsedRealtime();
+        sendUdp("SHARE_LIST:" + o);
+    }
+
+    /** Main thread: the TV may have lost the list (restarted) or the viewer picked another video on the TV. */
+    private void onTvShareStatus(TvStatus st) {
+        if (currentUrl.isEmpty()) return;
+        boolean ours = currentUrl.equals(st.shareUrl);
+        if (!ours && videoName.equals(st.title) && playlist.size() > 1
+                && android.os.SystemClock.elapsedRealtime() - lastListSent > 5000) {
+            sendShareList(); // still playing our video, but the TV doesn't have the list
+        }
+        if (lastSelectSeq < 0) {
+            lastSelectSeq = st.shareSelectSeq;
+            return;
+        }
+        if (st.shareSelectSeq != lastSelectSeq) {
+            lastSelectSeq = st.shareSelectSeq;
+            if (ours && st.shareSelect >= 0 && st.shareSelect < playlist.size()) selectIndex(st.shareSelect);
+        }
     }
 
     private void publish() {
@@ -446,6 +503,8 @@ public class CastService extends Service {
         selectedIndex = -1;
         subUrls = new ArrayList<>();
         videoName = "";
+        currentUrl = "";
+        lastSelectSeq = -1;
         baseUrl = null;
         snapshot = Collections.emptyList();
         currentIndex = -1;

@@ -87,11 +87,13 @@ public final class TorrentStreamer {
         public final int peers;
         public final int rate;
         public final int progress;
+        public final int fileProgress; // 0..1000: how much of the selected file has arrived (for the seek bar)
         public final String error;
         public final List<TvStatus.TorrentFile> files;
 
-        Snapshot(String state, String title, int selected, int peers, int rate, int progress,
+        Snapshot(String state, String title, int selected, int peers, int rate, int progress, int fileProgress,
                  String error, List<TvStatus.TorrentFile> files) {
+            this.fileProgress = fileProgress;
             this.state = state;
             this.title = title;
             this.selected = selected;
@@ -187,6 +189,8 @@ public final class TorrentStreamer {
     private volatile int peers;
     private volatile int rate;
     private volatile int progress;
+    private volatile int fileProgress;
+    private long lastFileCount;
 
     private long metadataDeadline;
     private long lastPeerAt;
@@ -330,6 +334,7 @@ public final class TorrentStreamer {
         peers = 0;
         rate = 0;
         progress = 0;
+        fileProgress = 0;
         metadataReady = false;
         choicePending = false;
         bufferPending = false;
@@ -712,6 +717,15 @@ public final class TorrentStreamer {
                         }
                     } else if (metadataReady) {
                         progress = (int) (st.progress() * 100);
+                        if (currentUrl != null && now - lastFileCount >= 1000) {
+                            lastFileCount = now;
+                            int count = lastPiece - firstPiece + 1;
+                            if (count > 0) fileProgress = (int) ((long) haveCount(h) * 1000 / count);
+                        }
+                    }
+                    if (bufferPending && haveCount > 0) {
+                        int count = lastPiece - firstPiece + 1;
+                        if (count > 0) fileProgress = (int) Math.min(1000, (long) haveCount * 1000 / count);
                     }
                     if (metadataReady && !bufferPending && currentUrl != null) maybeDeliverSubtitles(now);
                 }
@@ -815,7 +829,7 @@ public final class TorrentStreamer {
 
     private void notifyState(String override) {
         final Snapshot s = new Snapshot(override == null ? state() : override, currentTitle, selected,
-                peers, rate, progress, lastError, new ArrayList<>(videoFiles));
+                peers, rate, progress, fileProgress, lastError, new ArrayList<>(videoFiles));
         breadcrumb(s.state);
         final Listener l = listener;
         if (l != null) main.post(() -> l.onState(s));
@@ -886,6 +900,7 @@ public final class TorrentStreamer {
         selected = -1;
         metadataReady = false;
         progress = 0;
+        fileProgress = 0;
         peers = 0;
         rate = 0;
     }

@@ -39,6 +39,36 @@ final class UpdateDialog {
         }, "update-check").start();
     }
 
+    /** Reports the outcome of a check the user asked for. */
+    interface Result {
+        void message(String text);
+    }
+
+    /**
+     * A check the user asked for from the menu: ignores the daily limit and "never show again", and always says
+     * what happened.
+     */
+    static void checkNow(final Activity a, final Result result) {
+        if (BuildConfig.UPDATE_REPO.isEmpty()) {
+            result.message("Update checks aren't available in this build");
+            return;
+        }
+        result.message("Checking for updates…");
+        new Thread(() -> {
+            try {
+                final UpdateChecker.Update u = UpdateChecker.check(a);
+                UpdateChecker.markChecked(a);
+                a.runOnUiThread(() -> {
+                    if (a.isFinishing() || a.isDestroyed()) return;
+                    if (u == null) result.message("Ping! is up to date (" + BuildConfig.VERSION_NAME + ")");
+                    else show(a, u);
+                });
+            } catch (Exception e) {
+                a.runOnUiThread(() -> result.message("Couldn't reach GitHub to check for updates"));
+            }
+        }, "update-check-now").start();
+    }
+
     private static void show(final Activity a, final UpdateChecker.Update u) {
         View v = LayoutInflater.from(a).inflate(R.layout.dialog_update, null);
         final TextView message = v.findViewById(R.id.update_message);

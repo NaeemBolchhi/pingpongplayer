@@ -8,6 +8,7 @@ public class TvStatus {
     public static class Track {
         public int id;
         public String name;
+        public String source = ""; // subtitles: "torrent", "phone", "video" (where the track came from)
     }
 
     /** A video file found in the torrent currently loaded on the TV. */
@@ -49,5 +50,11 @@ public class TvStatus {
     public int torrentProgress;      // 0..100 of the selected file
     public String torrentError = "";
     public String torrentMessage = ""; // ready-made status line, the same text the TV shows
+    public int torrentFileProgress;  // 0..1000: how much of the playing file has downloaded
+
+    // videos shared from a phone, as the TV last received them (see CastService)
+    public String shareUrl = "";      // the video URL the TV's share list belongs to
+    public int shareSelect = -1;      // a video the viewer picked on the TV...
+    public int shareSelectSeq;        // ...counted up on every pick, so the phone can tell a new one
     public List<TorrentFile> torrentFiles = new ArrayList<>();
 }

@@ -6,7 +6,7 @@
     android:layout_marginBottom="8dp"
     android:clickable="true"
     android:focusable="true"
-    app:cardBackgroundColor="@color/surface_container"
+    app:cardBackgroundColor="?attr/colorSurfaceContainer"
     app:cardCornerRadius="16dp"
     app:cardElevation="0dp"
     app:strokeWidth="0dp">
@@ -32,7 +32,7 @@
                 android:layout_gravity="center"
                 android:importantForAccessibility="no"
                 android:src="@drawable/ic_tv"
-                app:tint="@color/on_primary_container" />
+                app:tint="?attr/colorOnPrimaryContainer" />
         </FrameLayout>
 
         <LinearLayout
@@ -64,6 +64,6 @@
             android:layout_height="24dp"
             android:importantForAccessibility="no"
             android:src="@drawable/ic_chevron"
-            app:tint="@color/on_surface_variant" />
+            app:tint="?attr/colorOnSurfaceVariant" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

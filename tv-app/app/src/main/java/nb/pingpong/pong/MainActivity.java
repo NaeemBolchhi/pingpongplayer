@@ -17,7 +17,11 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.view.View;
+import android.text.format.DateFormat;
+import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.ScrollView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -49,7 +53,13 @@ import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.List;
 import java.util.zip.GZIPInputStream;
 
@@ -68,7 +78,32 @@ public class MainActivity extends FragmentActivity {
     private SeekBar seekBar;
     private TextView tvTimeCur, tvTimeTotal, tvIdleChip, tvTitle, tvLoadingTitle, tvLoadingStatus;
     private View idleContainer, loadingOverlay, confirmOverlay, topBar, bottomBar, seekGlowLeft, seekGlowRight;
-    private ImageButton btnPlayPause, btnBackNav, btnBack10, btnFwd10;
+    private ImageButton btnPlayPause, btnBackNav, btnBack10, btnFwd10, btnPlaylist, btnSubtitles;
+    private Button btnSpeed;
+    private TextView tvStatusLine, tvEndsAt;
+    private View statusDot;
+
+    // side panel (playlist / subtitles)
+    private static final int PANEL_NONE = 0, PANEL_PLAYLIST = 1, PANEL_SUBS = 2;
+    private int panelKind = PANEL_NONE;
+    private View panelOverlay, panelOpener;
+    private TextView panelTitle, panelSubtitle;
+    private LinearLayout panelList;
+    private ScrollView panelScroll;
+    private ViewGroup controlsGroup;
+
+    // the videos of a share sent from a phone (SHARE_LIST); they belong to the URL that was playing then
+    private volatile String shareUrl = "";
+    private volatile int shareIndex = -1;
+    private final List<String> shareNames = new ArrayList<>();
+    private final List<Integer> shareSubs = new ArrayList<>();
+    private volatile int shareSelect = -1, shareSelectSeq = 0;
+
+    /** Where each subtitle file came from: "torrent" or "phone" (tracks inside the video are "video"). */
+    private final Map<String, String> subtitleSource = new ConcurrentHashMap<>();
+
+    private static final float[] SPEED_STEPS = {1f, 1.25f, 1.5f, 1.75f, 2f};
+    private final DecimalFormat speedFormat = new DecimalFormat("0.##", DecimalFormatSymbols.getInstance(Locale.US));
     private Button btnErrorOk, btnConfirmKeep, btnConfirmStop;
     private volatile boolean confirmShown = false;
     // update prompt
@@ -169,6 +204,28 @@ public class MainActivity extends FragmentActivity {
         btnConfirmStop = findViewById(R.id.btn_confirm_stop);
         tvTitle = findViewById(R.id.tv_title);
         btnPlayPause = findViewById(R.id.btn_play_pause);
+        btnSpeed = findViewById(R.id.btn_speed);
+        btnPlaylist = findViewById(R.id.btn_playlist);
+        btnSubtitles = findViewById(R.id.btn_subtitles);
+        tvStatusLine = findViewById(R.id.tv_status_line);
+        tvEndsAt = findViewById(R.id.tv_ends_at);
+        statusDot = findViewById(R.id.status_dot);
+        panelOverlay = findViewById(R.id.panel_overlay);
+        panelTitle = findViewById(R.id.panel_title);
+        panelSubtitle = findViewById(R.id.panel_subtitle);
+        panelList = findViewById(R.id.panel_list);
+        panelScroll = findViewById(R.id.panel_scroll);
+        controlsGroup = (ViewGroup) controlsOverlay;
+        panelOverlay.setOnClickListener(v -> closePanel()); // a tap beside the panel closes it
+        // the seek bar grows and brightens while it has focus
+        seekBar.setOnFocusChangeListener((v, has) -> {
+            int p = seekBar.getProgress(), sp = seekBar.getSecondaryProgress();
+            seekBar.setProgressDrawable(androidx.core.content.ContextCompat.getDrawable(this,
+                    has ? R.drawable.seek_progress_focused : R.drawable.seek_progress));
+            seekBar.setProgress(0);
+            seekBar.setProgress(p);
+            seekBar.setSecondaryProgress(sp);
+        });
 
         if (Build.VERSION.SDK_INT >= 28) {
             WindowManager.LayoutParams lp = getWindow().getAttributes();
@@ -204,6 +261,12 @@ public class MainActivity extends FragmentActivity {
             showControls();
         });
         btnBackNav.setOnClickListener(v -> showConfirm());
+        btnSpeed.setOnClickListener(v -> {
+            cycleSpeed();
+            showControls();
+        });
+        btnPlaylist.setOnClickListener(v -> openPanel(PANEL_PLAYLIST));
+        btnSubtitles.setOnClickListener(v -> openPanel(PANEL_SUBS));
         btnConfirmKeep.setOnClickListener(v -> dismissConfirm());
         btnConfirmStop.setOnClickListener(v -> {
             dismissConfirm();
@@ -318,6 +381,7 @@ public class MainActivity extends FragmentActivity {
         hideError();
         if (torrentMagnet != null) currentUrl = torrentMagnet; // "opening" for the phone until it's ready
         if (title != null && !title.isEmpty()) currentTitle = title;
+        closePanel();
         tvLoadingStatus.setText(torrentMessage(lastTorrent, false));
         idleContainer.setVisibility(View.GONE);
         hideControls();
@@ -389,6 +453,7 @@ public class MainActivity extends FragmentActivity {
                     outName = (dot > 0 ? outName.substring(0, dot) : outName) + ".srt";
                 }
                 File cached = saveSubtitle(data, outName);
+                subtitleSource.put(cached.getAbsolutePath(), "torrent");
                 addSubtitleFile(cached, true, first);
                 first = false;
             } catch (Exception ignored) {
@@ -436,7 +501,7 @@ public class MainActivity extends FragmentActivity {
 
     /** True when a touch belongs to a dialog or to the menu's top/bottom bars rather than the video. */
     private boolean insideOverlay(MotionEvent e) {
-        if (confirmShown || errorShown || updateShown) return true;
+        if (confirmShown || errorShown || updateShown || panelKind != PANEL_NONE) return true;
         if (!controlsVisible) return false;
         Rect r = new Rect();
         topBar.getHitRect(r);
@@ -632,6 +697,8 @@ public class MainActivity extends FragmentActivity {
                 handler.removeCallbacks(loadTimeout);
                 hideLoading();
                 updatePlayIcon(false);
+                closePanel();
+                maybeShowUpdate(); // a forced check found an update while this was playing
                 showControls(true);
                 return;
             }
@@ -679,6 +746,7 @@ public class MainActivity extends FragmentActivity {
     private void showError(String detail) {
         if (errorShown) return;
         errorShown = true;
+        closePanel();
         handler.removeCallbacks(loadTimeout);
         try {
             if (mediaPlayer != null) mediaPlayer.stop();
@@ -749,6 +817,13 @@ public class MainActivity extends FragmentActivity {
         currentUrl = null;
         currentTitle = "";
         subtitleFiles.clear();
+        closePanel();
+        synchronized (shareNames) {
+            shareUrl = "";
+            shareIndex = -1;
+            shareNames.clear();
+            shareSubs.clear();
+        }
         hideLoading();
         hideControls();
         idleContainer.setVisibility(View.VISIBLE);
@@ -781,9 +856,47 @@ public class MainActivity extends FragmentActivity {
         }, "update-check").start();
     }
 
-    /** The prompt only appears on the idle screen, never over a video. */
+    /** A check asked for from a phone ("Check for updates"): ignores the daily limit and "never show again". */
+    private void checkForUpdateNow() {
+        if (BuildConfig.UPDATE_REPO.isEmpty()) {
+            Toast.makeText(this, "Update checks aren't available in this build", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (checkingUpdate) return;
+        checkingUpdate = true;
+        Toast.makeText(this, "Checking for updates…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                final UpdateChecker.Update u = UpdateChecker.check(this);
+                UpdateChecker.markChecked(this);
+                runOnUiThread(() -> {
+                    if (u == null) {
+                        Toast.makeText(this, "Pong! is up to date (" + BuildConfig.VERSION_NAME + ")",
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    pendingUpdate = u;
+                    if (currentUrl != null && !isEnded()) {
+                        Toast.makeText(this, "Pong! " + u.version + " is available. It will be offered when the video ends.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                    maybeShowUpdate();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this, "Couldn't reach GitHub to check for updates",
+                        Toast.LENGTH_LONG).show());
+            } finally {
+                checkingUpdate = false;
+            }
+        }, "update-check-now").start();
+    }
+
+    /** The prompt appears on the idle screen or after a video ended, never over a video that is playing. */
     private void maybeShowUpdate() {
-        if (pendingUpdate == null || updateShown || currentUrl != null || confirmShown || errorShown) return;
+        if (pendingUpdate == null || updateShown || confirmShown || errorShown) return;
+        if (currentUrl != null && !isEnded()) return; // never over a video that is playing
+        closePanel();
+        hideControls();
         String size = UpdateLogic.humanSize(pendingUpdate.size);
         tvUpdateMsg.setText("Pong! " + pendingUpdate.version + " is available (you have " + BuildConfig.VERSION_NAME
                 + ")." + (size.isEmpty() ? "" : "\nDownload size: " + size));
@@ -867,6 +980,7 @@ public class MainActivity extends FragmentActivity {
     private void showConfirm() {
         if (currentUrl == null || errorShown) return;
         confirmShown = true;
+        closePanel();
         hideControls();
         confirmOverlay.setVisibility(View.VISIBLE);
         btnConfirmKeep.requestFocus();
@@ -1126,7 +1240,7 @@ public class MainActivity extends FragmentActivity {
 
     private void setTimes(long t, long len) {
         tvTimeCur.setText(formatTime(t));
-        tvTimeTotal.setText(len > 0 ? formatTime(len) : "--:--");
+        tvTimeTotal.setText(len > 0 ? "\u2212" + formatTime(Math.max(0, len - t)) : "--:--");
     }
 
     private void seekTo(long ms, long len) {
@@ -1214,6 +1328,7 @@ public class MainActivity extends FragmentActivity {
                     hint = (dot > 0 ? hint.substring(0, dot) : hint) + ext;
                 }
                 final File f = saveSubtitle(data, hint);
+                subtitleSource.put(f.getAbsolutePath(), "phone");
                 runOnUiThread(() -> {
                     addSubtitleFile(f, true, true);
                     Toast.makeText(this, "Subtitles loaded", Toast.LENGTH_SHORT).show();
@@ -1257,12 +1372,356 @@ public class MainActivity extends FragmentActivity {
                     setTimes(t, len);
                     tvTitle.setText(currentTitle);
                     updatePlayIcon(mediaPlayer.isPlaying());
+                    updateInfo(t, len);
                 }
             } catch (Exception ignored) {
             }
             handler.postDelayed(this, 500);
         }
     };
+
+    /** Status line (torrent progress), "Ends at", the speed button, the downloaded part of the seek bar. */
+    private void updateInfo(long t, long len) {
+        float rate = 1f;
+        boolean playing = false;
+        try {
+            rate = mediaPlayer.getRate();
+            playing = mediaPlayer.isPlaying();
+        } catch (Exception ignored) {
+        }
+        String status = "";
+        TorrentStreamer.Snapshot ts = lastTorrent;
+        if (currentIsTorrent && ts != null) {
+            String peers = ts.peers == 1 ? "1 peer" : ts.peers + " peers";
+            if ("streaming".equals(ts.state)) {
+                status = "Torrent · " + (ts.progress >= 100 ? "downloaded" : ts.progress + "% downloaded")
+                        + " · " + peers;
+            } else {
+                status = "Torrent · " + torrentMessage(ts, loaded);
+            }
+            seekBar.setSecondaryProgress(ts.fileProgress);
+        } else {
+            seekBar.setSecondaryProgress(0);
+            if (!playing && !isEnded() && loaded) status = "Paused";
+        }
+        String ends = "";
+        if (len > 0 && rate > 0 && !isEnded()) {
+            long end = System.currentTimeMillis() + (long) (Math.max(0, len - t) / rate);
+            ends = "Ends at " + DateFormat.getTimeFormat(this).format(new Date(end));
+        }
+        tvStatusLine.setText(status);
+        tvStatusLine.setVisibility(status.isEmpty() ? View.GONE : View.VISIBLE);
+        tvEndsAt.setText(ends);
+        tvEndsAt.setVisibility(ends.isEmpty() ? View.GONE : View.VISIBLE);
+        statusDot.setVisibility(status.isEmpty() || ends.isEmpty() ? View.GONE : View.VISIBLE);
+
+        String label = speedFormat.format(rate) + "x";
+        if (!label.contentEquals(btnSpeed.getText())) {
+            btnSpeed.setText(label);
+            btnSpeed.setContentDescription("Playback speed " + label + ", press to change");
+        }
+        boolean many = playlistRows().size() > 1;
+        int vis = many ? View.VISIBLE : View.GONE;
+        if (btnPlaylist.getVisibility() != vis) {
+            if (!many && btnPlaylist.hasFocus()) btnSubtitles.requestFocus();
+            btnPlaylist.setVisibility(vis);
+            // the gap before Subtitles belongs to Playlist only when it's shown
+            ((LinearLayout.LayoutParams) btnSubtitles.getLayoutParams()).setMarginStart(many ? dp(4) : 0);
+            btnSubtitles.requestLayout();
+        }
+    }
+
+    /** 1x → 1.25x → 1.5x → 1.75x → 2x → 1x. Any other speed (set from the phone) goes back to 1x. */
+    private void cycleSpeed() {
+        if (mediaPlayer == null) return;
+        float r = mediaPlayer.getRate();
+        float next = 1f;
+        for (int i = 0; i < SPEED_STEPS.length - 1; i++) {
+            if (Math.abs(r - SPEED_STEPS[i]) < 0.01f) next = SPEED_STEPS[i + 1];
+        }
+        mediaPlayer.setRate(next);
+        String label = speedFormat.format(next) + "x";
+        btnSpeed.setText(label);
+        btnSpeed.setContentDescription("Playback speed " + label + ", press to change");
+    }
+
+    private int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    // ------------------------------------------------------------ side panels
+
+    /** One row of a side panel. */
+    private static final class PanelRow {
+        final String name, detail;
+        final boolean current;
+        final int number; // shown when not current (playlist); 0 = none
+        final Runnable action;
+
+        PanelRow(String name, String detail, boolean current, int number, Runnable action) {
+            this.name = name;
+            this.detail = detail;
+            this.current = current;
+            this.number = number;
+            this.action = action;
+        }
+    }
+
+    /** The torrent's videos, or the videos shared from a phone, or nothing (a single video). */
+    private List<PanelRow> playlistRows() {
+        List<PanelRow> rows = new ArrayList<>();
+        TorrentStreamer.Snapshot ts = lastTorrent;
+        if (currentIsTorrent && ts != null && ts.files != null) {
+            int n = 0;
+            for (final TvStatus.TorrentFile f : ts.files) {
+                n++;
+                boolean cur = f.index == ts.selected;
+                String size = f.size > 0 ? UpdateLogic.humanSize(f.size) : "";
+                String detail = cur ? (size.isEmpty() ? "Playing" : "Playing · " + size) : size;
+                rows.add(new PanelRow(f.name, detail, cur, n, () -> {
+                    if (torrents != null) torrents.selectFile(f.index);
+                    closePanel();
+                    hideControls();
+                }));
+            }
+            return rows;
+        }
+        String url = currentUrl;
+        synchronized (shareNames) {
+            if (url == null || !url.equals(shareUrl) || shareNames.size() < 2) return rows;
+            for (int i = 0; i < shareNames.size(); i++) {
+                final int idx = i;
+                final String name = shareNames.get(i);
+                boolean cur = i == shareIndex;
+                int subs = shareSubs.get(i);
+                String subText = subs > 0 ? subs + (subs == 1 ? " subtitle" : " subtitles") : "";
+                String detail = cur ? (subText.isEmpty() ? "Playing" : "Playing · " + subText) : subText;
+                rows.add(new PanelRow(name, detail, cur, i + 1, () -> {
+                    // the phone serves these files: ask it to switch (it reads this from the status)
+                    shareSelect = idx;
+                    shareSelectSeq++;
+                    Toast.makeText(this, "Switching to " + name + "…", Toast.LENGTH_SHORT).show();
+                    closePanel();
+                    hideControls();
+                }));
+            }
+        }
+        return rows;
+    }
+
+    /** "Off" plus every subtitle track, with where it came from. */
+    private List<PanelRow> subtitleRows() {
+        List<PanelRow> rows = new ArrayList<>();
+        final MediaPlayer mp = mediaPlayer;
+        if (mp == null) return rows;
+        MediaPlayer.TrackDescription[] tracks;
+        int current;
+        try {
+            tracks = mp.getSpuTracks();
+            current = mp.getSpuTrack();
+        } catch (Exception e) {
+            return rows;
+        }
+        rows.add(new PanelRow("Off", "", current == -1, 0, () -> selectSubtitle(-1)));
+        if (tracks == null) return rows;
+        String[] sources = subtitleSources(tracks, new ArrayList<>(subtitleFiles));
+        File[] files = slaveFiles(tracks, new ArrayList<>(subtitleFiles));
+        for (int i = 0; i < tracks.length; i++) {
+            final int id = tracks[i].id;
+            if (id == -1) continue;
+            String name = tracks[i].name == null ? "" : tracks[i].name.trim();
+            File f = files[i];
+            if (f != null && genericTrackName(name)) name = baseName(f.getName());
+            if (name.isEmpty()) name = "Track " + id;
+            String label = sourceLabel(sources[i]);
+            String detail = f != null ? f.getName() + (label.isEmpty() ? "" : " · " + label) : label;
+            rows.add(new PanelRow(name, detail, id == current, 0, () -> selectSubtitle(id)));
+        }
+        return rows;
+    }
+
+    private void selectSubtitle(int id) {
+        try {
+            if (mediaPlayer != null) mediaPlayer.setSpuTrack(id);
+        } catch (Exception ignored) {
+        }
+        // move the check, keep the focus on the row that was picked
+        int focused = panelList.indexOfChild(panelList.getFocusedChild());
+        fillPanel();
+        View v = panelList.getChildAt(Math.max(0, focused));
+        if (v != null) v.requestFocus();
+    }
+
+    private static boolean genericTrackName(String n) {
+        return n.isEmpty() || n.matches("(?i)(track|subtitle)s?\\s*\\d*|undetermined|unknown|und");
+    }
+
+    private static String baseName(String file) {
+        int dot = file.lastIndexOf('.');
+        return dot > 0 ? file.substring(0, dot) : file;
+    }
+
+    private static String sourceLabel(String source) {
+        if ("torrent".equals(source)) return "from the torrent";
+        if ("phone".equals(source)) return "Sent from Ping!";
+        if ("video".equals(source)) return "In the video file";
+        return "";
+    }
+
+    /**
+     * The files added as subtitle slaves show up as the last tracks, in the order they were added; everything
+     * before them is inside the video. Returns, per track, the slave file (or null).
+     */
+    private static File[] slaveFiles(MediaPlayer.TrackDescription[] tracks, List<File> slaves) {
+        File[] out = new File[tracks.length];
+        List<Integer> real = new ArrayList<>();
+        for (int i = 0; i < tracks.length; i++) if (tracks[i].id != -1) real.add(i);
+        int s = Math.min(slaves.size(), real.size());
+        for (int j = 0; j < s; j++) {
+            out[real.get(real.size() - s + j)] = slaves.get(slaves.size() - s + j);
+        }
+        return out;
+    }
+
+    private String[] subtitleSources(MediaPlayer.TrackDescription[] tracks, List<File> slaves) {
+        File[] files = slaveFiles(tracks, slaves);
+        String[] out = new String[tracks.length];
+        for (int i = 0; i < tracks.length; i++) {
+            if (tracks[i].id == -1) out[i] = "";
+            else if (files[i] == null) out[i] = "video";
+            else {
+                String src = subtitleSource.get(files[i].getAbsolutePath());
+                out[i] = src == null ? "phone" : src;
+            }
+        }
+        return out;
+    }
+
+    private void openPanel(int kind) {
+        if (currentUrl == null) return;
+        panelOpener = getCurrentFocus();
+        panelKind = kind;
+        handler.removeCallbacks(hideControlsRunnable); // the menu stays while the panel is open
+        // only the panel takes focus while it's open
+        controlsGroup.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        fillPanel();
+        panelOverlay.setVisibility(View.VISIBLE);
+        panelScroll.scrollTo(0, 0);
+        View first = null;
+        for (int i = 0; i < panelList.getChildCount(); i++) {
+            View v = panelList.getChildAt(i);
+            if (first == null) first = v;
+            if (Boolean.TRUE.equals(v.getTag())) {
+                first = v;
+                break;
+            }
+        }
+        if (first != null) first.requestFocus();
+    }
+
+    private void closePanel() {
+        if (panelKind == PANEL_NONE) return;
+        panelKind = PANEL_NONE;
+        panelOverlay.setVisibility(View.GONE);
+        panelList.removeAllViews();
+        controlsGroup.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        if (controlsVisible) {
+            View back = panelOpener != null && panelOpener.getVisibility() == View.VISIBLE ? panelOpener : btnPlayPause;
+            back.requestFocus();
+            handler.removeCallbacks(hideControlsRunnable);
+            handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS);
+        }
+        panelOpener = null;
+    }
+
+    private void fillPanel() {
+        panelList.removeAllViews();
+        List<PanelRow> rows;
+        if (panelKind == PANEL_PLAYLIST) {
+            panelTitle.setText("Playlist");
+            panelSubtitle.setText(currentIsTorrent ? "Videos in this torrent" : "Videos in this share");
+            rows = playlistRows();
+        } else {
+            panelTitle.setText("Subtitles");
+            panelSubtitle.setText("Choose a subtitle track");
+            rows = subtitleRows();
+        }
+        for (PanelRow r : rows) panelList.addView(panelRow(r));
+    }
+
+    private View panelRow(final PanelRow r) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(52));
+        row.setPadding(dp(14), dp(6), dp(18), dp(6));
+        row.setBackgroundResource(R.drawable.row_bg);
+        row.setFocusable(true);
+        row.setClickable(true);
+        row.setTag(r.current);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(4);
+        row.setLayoutParams(lp);
+
+        android.content.res.ColorStateList text = androidx.core.content.ContextCompat.getColorStateList(this, R.color.row_text);
+        android.content.res.ColorStateList detail = androidx.core.content.ContextCompat.getColorStateList(this, R.color.row_detail);
+        // the leading slot: play/check icon on the current row, else the number (or blank)
+        View lead;
+        if (r.current) {
+            ImageView iv = new ImageView(this);
+            iv.setImageResource(panelKind == PANEL_PLAYLIST ? R.drawable.ic_play : R.drawable.ic_check);
+            iv.setImageTintList(text);
+            iv.setContentDescription(panelKind == PANEL_PLAYLIST ? "Now playing" : "Selected");
+            lead = iv;
+        } else {
+            TextView num = new TextView(this);
+            num.setText(r.number > 0 ? String.valueOf(r.number) : "");
+            num.setGravity(android.view.Gravity.CENTER);
+            num.setTextSize(15);
+            num.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+            num.setTextColor(detail);
+            lead = num;
+        }
+        lead.setDuplicateParentStateEnabled(true);
+        row.addView(lead, new LinearLayout.LayoutParams(dp(22), dp(22)));
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setDuplicateParentStateEnabled(true);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        tlp.setMarginStart(dp(12));
+        row.addView(texts, tlp);
+
+        TextView name = new TextView(this);
+        name.setText(r.name);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        name.setTextSize(17);
+        name.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        name.setTextColor(text);
+        name.setDuplicateParentStateEnabled(true);
+        texts.addView(name);
+        if (!r.detail.isEmpty()) {
+            TextView d = new TextView(this);
+            d.setText(r.detail);
+            d.setSingleLine(true);
+            d.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            d.setTextSize(13);
+            d.setTextColor(detail);
+            d.setDuplicateParentStateEnabled(true);
+            texts.addView(d);
+        }
+        row.setContentDescription(r.name + (r.detail.isEmpty() ? "" : ", " + r.detail));
+        row.setOnClickListener(v -> {
+            if (r.current && panelKind == PANEL_PLAYLIST) {
+                closePanel(); // already playing
+                return;
+            }
+            r.action.run();
+        });
+        return row;
+    }
 
     private static String formatTime(long ms) {
         long s = Math.max(0, ms) / 1000;
@@ -1281,6 +1740,16 @@ public class MainActivity extends FragmentActivity {
         controlsOverlay.setVisibility(View.VISIBLE);
         controlsVisible = true;
         tvTitle.setText(currentTitle);
+        try {
+            if (mediaPlayer != null) {
+                long len = mediaPlayer.getLength(), t = mediaPlayer.getTime();
+                if (len > 0) seekBar.setProgress((int) (t * 1000 / len));
+                setTimes(t, len);
+                updateInfo(t, len);
+            }
+        } catch (Exception ignored) {
+        }
+        if (panelKind != PANEL_NONE) return;
         if (mediaPlayer != null) updatePlayIcon(mediaPlayer.isPlaying());
         View f = getCurrentFocus();
         if (focusPlay) btnPlayPause.requestFocus();
@@ -1290,6 +1759,7 @@ public class MainActivity extends FragmentActivity {
     }
 
     private void hideControls() {
+        if (panelKind != PANEL_NONE) closePanel();
         controlsOverlay.setVisibility(View.GONE);
         controlsVisible = false;
         handler.removeCallbacks(hideControlsRunnable);
@@ -1306,6 +1776,9 @@ public class MainActivity extends FragmentActivity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int k = event.getKeyCode();
+        if (panelKind != PANEL_NONE && (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            return true; // the panel is a single column: left/right do nothing (and never seek)
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !errorShown && !confirmShown && !updateShown && currentUrl != null
                 && (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             int dir = k == KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1;
@@ -1334,7 +1807,16 @@ public class MainActivity extends FragmentActivity {
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         View focus = getCurrentFocus();
         boolean onButton = controlsVisible && focus != null && (focus == btnPlayPause
-                || focus == btnBackNav || focus == btnBack10 || focus == btnFwd10 || focus == seekBar);
+                || focus == btnBackNav || focus == btnBack10 || focus == btnFwd10 || focus == seekBar
+                || focus == btnSpeed || focus == btnPlaylist || focus == btnSubtitles);
+
+        if (panelKind != PANEL_NONE) {
+            if (keyCode == KeyEvent.KEYCODE_BACK) {
+                closePanel();
+                return true;
+            }
+            return super.onKeyDown(keyCode, event); // up/down move through the list, OK picks
+        }
 
         if (updateShown) {
             if (keyCode == KeyEvent.KEYCODE_BACK) {
@@ -1385,9 +1867,12 @@ public class MainActivity extends FragmentActivity {
                 seekWithFeedback(SEEK_STEP_MS);
                 return true;
             case KeyEvent.KEYCODE_CAPTIONS:
-            case KeyEvent.KEYCODE_MENU:
                 toggleSubtitles();
                 showControls();
+                return true;
+            case KeyEvent.KEYCODE_MENU:
+                showControls();
+                openPanel(PANEL_SUBS);
                 return true;
             default:
                 break;
@@ -1572,6 +2057,12 @@ public class MainActivity extends FragmentActivity {
             case "SUB_URL":
                 downloadSubtitle(arg.trim());
                 break;
+            case "SHARE_LIST":
+                setShareList(arg);
+                break;
+            case "CHECK_UPDATE":
+                checkForUpdateNow();
+                break;
             case "HDR":
                 hdr = arg.equals("ON");
                 saveStyle();
@@ -1600,6 +2091,32 @@ public class MainActivity extends FragmentActivity {
         }
     }
 
+    /** {url, index, items[{name, subs}]}: the videos of a phone's share, for the Playlist panel. */
+    private void setShareList(String json) {
+        try {
+            JsonObject o = JsonParser.parseString(json).getAsJsonObject();
+            String url = o.get("url").getAsString().trim();
+            int index = o.has("index") ? o.get("index").getAsInt() : -1;
+            List<String> names = new ArrayList<>();
+            List<Integer> subs = new ArrayList<>();
+            for (com.google.gson.JsonElement e : o.getAsJsonArray("items")) {
+                JsonObject it = e.getAsJsonObject();
+                names.add(it.has("name") ? it.get("name").getAsString() : "Video");
+                subs.add(it.has("subs") ? it.get("subs").getAsInt() : 0);
+            }
+            synchronized (shareNames) {
+                shareUrl = url;
+                shareIndex = index;
+                shareNames.clear();
+                shareNames.addAll(names);
+                shareSubs.clear();
+                shareSubs.addAll(subs);
+            }
+            if (panelKind == PANEL_PLAYLIST) fillPanel();
+        } catch (Exception ignored) {
+        }
+    }
+
     private TvStatus buildStatus() {
         TvStatus s = new TvStatus();
         s.name = serviceName;
@@ -1610,6 +2127,9 @@ public class MainActivity extends FragmentActivity {
         s.subBg = subBg;
         s.subBold = subBold;
         s.hdr = hdr;
+        s.shareUrl = shareUrl;
+        s.shareSelect = shareSelect;
+        s.shareSelectSeq = shareSelectSeq;
         fillTorrentStatus(s);
         if (errorShown) {
             s.state = "error";
@@ -1641,7 +2161,12 @@ public class MainActivity extends FragmentActivity {
             s.audioDelay = mp.getAudioDelay() / 1000L;
             s.spuDelay = mp.getSpuDelay() / 1000L;
             fillTracks(s.audioTracks, mp.getAudioTracks());
-            fillTracks(s.spuTracks, mp.getSpuTracks());
+            MediaPlayer.TrackDescription[] spu = mp.getSpuTracks();
+            fillTracks(s.spuTracks, spu);
+            if (spu != null) {
+                String[] src = subtitleSources(spu, new ArrayList<>(subtitleFiles));
+                for (int i = 0; i < s.spuTracks.size() && i < src.length; i++) s.spuTracks.get(i).source = src[i];
+            }
         } catch (Exception ignored) {
         }
         return s;
@@ -1664,6 +2189,7 @@ public class MainActivity extends FragmentActivity {
         s.torrentPeers = ts.peers;
         s.torrentRate = ts.rate;
         s.torrentProgress = ts.progress;
+        s.torrentFileProgress = ts.fileProgress;
         s.torrentError = ts.error == null ? "" : ts.error;
         if (ts.files != null) s.torrentFiles.addAll(ts.files);
     }

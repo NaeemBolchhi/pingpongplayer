@@ -3,16 +3,16 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/surface"
+    android:background="?attr/colorSurface"
     android:orientation="vertical">
 
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="64dp"
-        android:background="@color/surface"
+        android:background="?attr/colorSurface"
         app:title="Ping!"
-        app:titleTextColor="@color/on_surface"
+        app:titleTextColor="?attr/colorOnSurface"
         app:titleTextAppearance="@style/TextAppearance.Material3.TitleLarge" />
 
     <com.google.android.material.progressindicator.LinearProgressIndicator
@@ -50,7 +50,7 @@
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="24dp"
-        app:cardBackgroundColor="@color/primary_container"
+        app:cardBackgroundColor="?attr/colorPrimaryContainer"
         app:cardCornerRadius="16dp"
         app:cardElevation="0dp"
         app:strokeWidth="0dp">
@@ -67,7 +67,7 @@
                 android:layout_height="24dp"
                 android:importantForAccessibility="no"
                 android:src="@drawable/ic_share"
-                app:tint="@color/on_primary_container" />
+                app:tint="?attr/colorOnPrimaryContainer" />
 
             <TextView
                 android:layout_width="0dp"
@@ -75,7 +75,7 @@
                 android:layout_marginStart="12dp"
                 android:layout_weight="1"
                 android:text="Share a link from any app to Ping! to cast it. Or pick a TV and paste one with Paste &amp; play."
-                android:textColor="@color/on_primary_container"
+                android:textColor="?attr/colorOnPrimaryContainer"
                 android:textSize="14sp" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>

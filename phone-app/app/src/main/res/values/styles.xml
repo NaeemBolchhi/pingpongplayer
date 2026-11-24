@@ -4,22 +4,22 @@
     <style name="Ping" parent="" />
     <style name="Ping.Cap">
         <item name="android:textSize">12sp</item>
-        <item name="android:textColor">@color/on_surface_variant</item>
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:letterSpacing">0.04</item>
     </style>
     <style name="Ping.Label">
         <item name="android:textSize">16sp</item>
-        <item name="android:textColor">@color/on_surface</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
     <style name="Ping.Sup">
         <item name="android:textSize">14sp</item>
-        <item name="android:textColor">@color/on_surface_variant</item>
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
     </style>
     <style name="Ping.StepValue">
         <item name="android:textSize">28sp</item>
-        <item name="android:textColor">@color/on_surface</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:gravity">center</item>
     </style>
@@ -86,6 +86,51 @@
         <item name="android:paddingRight">14dp</item>
         <item name="cornerRadius">18dp</item>
         <item name="iconSize">18dp</item>
+    </style>
+
+    <!-- settings screen -->
+    <style name="Ping.SettingsHeader">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:paddingTop">20dp</item>
+        <item name="android:paddingBottom">4dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">?attr/colorPrimary</item>
+    </style>
+    <style name="Ping.SettingsItem">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+    </style>
+    <style name="Ping.SettingsTitle">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
+    </style>
+
+    <!-- remote: a section heading row (label, optional value, collapse arrow on the right) -->
+    <style name="Ping.SectionRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">32dp</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingStart">4dp</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+    <style name="Ping.SectionLabel" parent="Ping.Cap">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
     </style>
 
 </resources>

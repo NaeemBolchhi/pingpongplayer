@@ -6,7 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginBottom="8dp"
-    app:cardBackgroundColor="@color/surface_container"
+    app:cardBackgroundColor="?attr/colorSurfaceContainer"
     app:cardCornerRadius="12dp"
     app:cardElevation="0dp"
     app:strokeWidth="0dp">
@@ -32,7 +32,7 @@
             android:minWidth="32dp"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
-            android:textColor="@color/on_primary_container" />
+            android:textColor="?attr/colorOnPrimaryContainer" />
 
         <LinearLayout
             android:layout_width="0dp"
@@ -68,6 +68,6 @@
             android:contentDescription="Now playing"
             android:src="@drawable/ic_play"
             android:visibility="gone"
-            app:tint="@color/primary" />
+            app:tint="?attr/colorPrimary" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

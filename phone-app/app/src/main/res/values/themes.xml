@@ -15,13 +15,146 @@
         <item name="colorOnSurfaceVariant">@color/on_surface_variant</item>
         <item name="colorOutline">@color/outline</item>
         <item name="colorOutlineVariant">@color/outline_variant</item>
-        <item name="colorError">@color/error</item>
-        <item name="colorErrorContainer">@color/error_container</item>
-        <item name="colorOnErrorContainer">@color/on_error_container</item>
+        <item name="colorSurfaceContainerLowest">@color/surface</item>
+        <item name="colorSurfaceContainerLow">@color/surface_container</item>
+        <item name="colorSurfaceContainer">@color/surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/surface_container_high</item>
+        <item name="colorSurfaceContainerHighest">@color/surface_container_highest</item>
         <item name="android:colorBackground">@color/surface</item>
         <item name="android:statusBarColor">@color/surface</item>
         <item name="android:navigationBarColor">@color/surface</item>
+        <item name="pingNavIndicator">@color/nav_indicator</item>
+        <item name="colorError">@color/error</item>
+        <item name="colorErrorContainer">@color/error_container</item>
+        <item name="colorOnErrorContainer">@color/on_error_container</item>
         <item name="android:windowLightStatusBar" tools:targetApi="23">@bool/light_bars</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">@bool/light_bars</item>
+    </style>
+
+    <!-- Settings › Colors › Accent color. Ember is the base theme above; the others are applied on top. -->
+    <style name="ThemeOverlay.Ping.Ocean" parent="">
+        <item name="colorPrimary">@color/acc_ocean_primary</item>
+        <item name="colorOnPrimary">@color/acc_ocean_on_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_ocean_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_ocean_on_primary_container</item>
+        <item name="colorSecondary">@color/acc_ocean_primary</item>
+        <item name="colorOnSecondary">@color/acc_ocean_on_primary</item>
+        <item name="colorSecondaryContainer">@color/acc_ocean_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/acc_ocean_on_secondary_container</item>
+        <item name="colorSurface">@color/acc_ocean_surface</item>
+        <item name="colorOnSurface">@color/acc_ocean_on_surface</item>
+        <item name="colorSurfaceVariant">@color/acc_ocean_surface_container_highest</item>
+        <item name="colorOnSurfaceVariant">@color/acc_ocean_on_surface_variant</item>
+        <item name="colorOutline">@color/acc_ocean_outline</item>
+        <item name="colorOutlineVariant">@color/acc_ocean_outline_variant</item>
+        <item name="colorSurfaceContainerLowest">@color/acc_ocean_surface</item>
+        <item name="colorSurfaceContainerLow">@color/acc_ocean_surface_container</item>
+        <item name="colorSurfaceContainer">@color/acc_ocean_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/acc_ocean_surface_container_high</item>
+        <item name="colorSurfaceContainerHighest">@color/acc_ocean_surface_container_highest</item>
+        <item name="android:colorBackground">@color/acc_ocean_surface</item>
+        <item name="android:statusBarColor">@color/acc_ocean_surface</item>
+        <item name="android:navigationBarColor">@color/acc_ocean_surface</item>
+        <item name="pingNavIndicator">@color/acc_ocean_nav_indicator</item>
+    </style>
+    <style name="ThemeOverlay.Ping.Forest" parent="">
+        <item name="colorPrimary">@color/acc_forest_primary</item>
+        <item name="colorOnPrimary">@color/acc_forest_on_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_forest_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_forest_on_primary_container</item>
+        <item name="colorSecondary">@color/acc_forest_primary</item>
+        <item name="colorOnSecondary">@color/acc_forest_on_primary</item>
+        <item name="colorSecondaryContainer">@color/acc_forest_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/acc_forest_on_secondary_container</item>
+        <item name="colorSurface">@color/acc_forest_surface</item>
+        <item name="colorOnSurface">@color/acc_forest_on_surface</item>
+        <item name="colorSurfaceVariant">@color/acc_forest_surface_container_highest</item>
+        <item name="colorOnSurfaceVariant">@color/acc_forest_on_surface_variant</item>
+        <item name="colorOutline">@color/acc_forest_outline</item>
+        <item name="colorOutlineVariant">@color/acc_forest_outline_variant</item>
+        <item name="colorSurfaceContainerLowest">@color/acc_forest_surface</item>
+        <item name="colorSurfaceContainerLow">@color/acc_forest_surface_container</item>
+        <item name="colorSurfaceContainer">@color/acc_forest_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/acc_forest_surface_container_high</item>
+        <item name="colorSurfaceContainerHighest">@color/acc_forest_surface_container_highest</item>
+        <item name="android:colorBackground">@color/acc_forest_surface</item>
+        <item name="android:statusBarColor">@color/acc_forest_surface</item>
+        <item name="android:navigationBarColor">@color/acc_forest_surface</item>
+        <item name="pingNavIndicator">@color/acc_forest_nav_indicator</item>
+    </style>
+    <style name="ThemeOverlay.Ping.Grape" parent="">
+        <item name="colorPrimary">@color/acc_grape_primary</item>
+        <item name="colorOnPrimary">@color/acc_grape_on_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_grape_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_grape_on_primary_container</item>
+        <item name="colorSecondary">@color/acc_grape_primary</item>
+        <item name="colorOnSecondary">@color/acc_grape_on_primary</item>
+        <item name="colorSecondaryContainer">@color/acc_grape_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/acc_grape_on_secondary_container</item>
+        <item name="colorSurface">@color/acc_grape_surface</item>
+        <item name="colorOnSurface">@color/acc_grape_on_surface</item>
+        <item name="colorSurfaceVariant">@color/acc_grape_surface_container_highest</item>
+        <item name="colorOnSurfaceVariant">@color/acc_grape_on_surface_variant</item>
+        <item name="colorOutline">@color/acc_grape_outline</item>
+        <item name="colorOutlineVariant">@color/acc_grape_outline_variant</item>
+        <item name="colorSurfaceContainerLowest">@color/acc_grape_surface</item>
+        <item name="colorSurfaceContainerLow">@color/acc_grape_surface_container</item>
+        <item name="colorSurfaceContainer">@color/acc_grape_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/acc_grape_surface_container_high</item>
+        <item name="colorSurfaceContainerHighest">@color/acc_grape_surface_container_highest</item>
+        <item name="android:colorBackground">@color/acc_grape_surface</item>
+        <item name="android:statusBarColor">@color/acc_grape_surface</item>
+        <item name="android:navigationBarColor">@color/acc_grape_surface</item>
+        <item name="pingNavIndicator">@color/acc_grape_nav_indicator</item>
+    </style>
+    <style name="ThemeOverlay.Ping.Rose" parent="">
+        <item name="colorPrimary">@color/acc_rose_primary</item>
+        <item name="colorOnPrimary">@color/acc_rose_on_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_rose_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_rose_on_primary_container</item>
+        <item name="colorSecondary">@color/acc_rose_primary</item>
+        <item name="colorOnSecondary">@color/acc_rose_on_primary</item>
+        <item name="colorSecondaryContainer">@color/acc_rose_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/acc_rose_on_secondary_container</item>
+        <item name="colorSurface">@color/acc_rose_surface</item>
+        <item name="colorOnSurface">@color/acc_rose_on_surface</item>
+        <item name="colorSurfaceVariant">@color/acc_rose_surface_container_highest</item>
+        <item name="colorOnSurfaceVariant">@color/acc_rose_on_surface_variant</item>
+        <item name="colorOutline">@color/acc_rose_outline</item>
+        <item name="colorOutlineVariant">@color/acc_rose_outline_variant</item>
+        <item name="colorSurfaceContainerLowest">@color/acc_rose_surface</item>
+        <item name="colorSurfaceContainerLow">@color/acc_rose_surface_container</item>
+        <item name="colorSurfaceContainer">@color/acc_rose_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/acc_rose_surface_container_high</item>
+        <item name="colorSurfaceContainerHighest">@color/acc_rose_surface_container_highest</item>
+        <item name="android:colorBackground">@color/acc_rose_surface</item>
+        <item name="android:statusBarColor">@color/acc_rose_surface</item>
+        <item name="android:navigationBarColor">@color/acc_rose_surface</item>
+        <item name="pingNavIndicator">@color/acc_rose_nav_indicator</item>
+    </style>
+    <style name="ThemeOverlay.Ping.Teal" parent="">
+        <item name="colorPrimary">@color/acc_teal_primary</item>
+        <item name="colorOnPrimary">@color/acc_teal_on_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_teal_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_teal_on_primary_container</item>
+        <item name="colorSecondary">@color/acc_teal_primary</item>
+        <item name="colorOnSecondary">@color/acc_teal_on_primary</item>
+        <item name="colorSecondaryContainer">@color/acc_teal_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/acc_teal_on_secondary_container</item>
+        <item name="colorSurface">@color/acc_teal_surface</item>
+        <item name="colorOnSurface">@color/acc_teal_on_surface</item>
+        <item name="colorSurfaceVariant">@color/acc_teal_surface_container_highest</item>
+        <item name="colorOnSurfaceVariant">@color/acc_teal_on_surface_variant</item>
+        <item name="colorOutline">@color/acc_teal_outline</item>
+        <item name="colorOutlineVariant">@color/acc_teal_outline_variant</item>
+        <item name="colorSurfaceContainerLowest">@color/acc_teal_surface</item>
+        <item name="colorSurfaceContainerLow">@color/acc_teal_surface_container</item>
+        <item name="colorSurfaceContainer">@color/acc_teal_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/acc_teal_surface_container_high</item>
+        <item name="colorSurfaceContainerHighest">@color/acc_teal_surface_container_highest</item>
+        <item name="android:colorBackground">@color/acc_teal_surface</item>
+        <item name="android:statusBarColor">@color/acc_teal_surface</item>
+        <item name="android:navigationBarColor">@color/acc_teal_surface</item>
+        <item name="pingNavIndicator">@color/acc_teal_nav_indicator</item>
     </style>
 </resources>

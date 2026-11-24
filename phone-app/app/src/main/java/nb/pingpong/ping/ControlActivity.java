@@ -3,6 +3,8 @@ package nb.pingpong.ping;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -11,7 +13,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.LayoutInflater;
+import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.GridLayout;
@@ -22,16 +27,17 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.widget.NestedScrollView;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.progressindicator.LinearProgressIndicator;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.snackbar.Snackbar;
-import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.textfield.MaterialAutoCompleteTextView;
 import com.google.gson.JsonObject;
 
@@ -43,7 +49,10 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Remote control for one TV app. Shows no video/audio, only controls. */
+/**
+ * Remote control for one TV app. Four tabs in a navigation bar (Controls, Playback, Subtitles, Playlist);
+ * every grey section heading collapses its section, and the collapsed state is remembered.
+ */
 public class ControlActivity extends AppCompatActivity implements TvClient.Listener {
     private static final float[] PRESETS = {
             0.25f, 0.5f, 0.75f, 1f,
@@ -51,7 +60,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             2.25f, 2.5f, 2.75f, 3f,
             3.25f, 3.5f, 3.75f, 4f};
     private static final float SPEED_STEP = 0.05f, SPEED_MIN = 0.05f, SPEED_MAX = 16f;
-    private static final int AUDIO_STEP_MS = 250, SUB_STEP_MS = 500;
+    private static final int AUDIO_STEP_MS = 250, SUB_STEP_MS = 500, VOLUME_STEP = 5;
     private static final String[] COLOR_NAMES = {"White", "Yellow", "Cyan", "Green"};
     private static final int[] COLORS = {0xFFFFFF, 0xFFFF00, 0x00FFFF, 0x00FF00};
     private static final int[] OUTLINE_IDS = {R.id.ol_none, R.id.ol_thin, R.id.ol_normal, R.id.ol_thick};
@@ -60,11 +69,19 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     private static final long HOLD_MS = 2000;
     private static final float DISABLED_ALPHA = 0.38f;
 
+    private static final String[] TAB_NAMES = {"Controls", "Playback", "Subtitles", "Playlist"};
+    private static final int[] TAB_ICONS = {R.drawable.ic_tab_controls, R.drawable.ic_tab_playback,
+            R.drawable.ic_tab_subtitles, R.drawable.ic_tab_playlist};
+    private static final int TAB_PLAYLIST = 3;
+    /** Where the Playlist tab's rows come from. */
+    private static final int MODE_SINGLE = 0, MODE_LOCAL = 1, MODE_TORRENT = 2;
+
     private final DecimalFormat shortNum = new DecimalFormat("0.##", DecimalFormatSymbols.getInstance(Locale.US));
 
     private DeviceInfo device;
     private TvClient client;
     private UsageStore usage;
+    private SharedPreferences prefs;
     private TvStatus last = new TvStatus();
     private boolean connected = false;
     private boolean seeking = false;
@@ -76,29 +93,41 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     private long holdSpeed, holdVol, holdAudio, holdSub, holdTracks, holdDr;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
+    // appearance in force when this screen was built; a change in Settings rebuilds it
+    private boolean generatedColors;
+    private String appearanceSig = "";
+
     // local values behind the steppers
     private float speed = 1f;
     private long audioMs = 0, subMs = 0;
+    private int volumeValue = 100;
     private boolean hdr = false;
     private int colorIdx = 0;
     private String tvName = "";
 
     private View root, banner;
     private MaterialToolbar toolbar;
-    private TextView tvTitle, tvState, tvPos, tvLen, tvVolume, tvSpeed, tvAudioSync, tvSubSync, tvSize, tvBg, preview;
+    private NestedScrollView scroll;
+    private NavBar nav;
+    private TextView tvTitle, tvState, tvDesc, tvPos, tvLen, tvVolume, tvSpeed, tvAudioSync, tvSubSync, tvSize, tvBg,
+            preview;
     private Slider seek, volume, slSize, slBg;
     private MaterialButton btnBack10, btnPlay, btnFwd10, btnPasteVideo, btnSlower, btnFaster, btnSdr, btnHdr;
+    private MaterialButton btnVolLess, btnVolMore;
     private MaterialButton btnAudioLess, btnAudioMore, btnAudioReset, btnSubLess, btnSubMore, btnSubReset;
-    private MaterialButton btnPasteSub, btnSearch;
+    private MaterialButton btnPasteSub;
+    private View btnSearch;
     private MaterialAutoCompleteTextView ddAudio, ddSubtitle;
     private View tilAudio, tilSubtitle;
     private MaterialSwitch swBold;
     private MaterialButtonToggleGroup outlineGroup;
     private EditText etQuery, etLang;
     private LinearLayout results, swatches;
-    private View paneVideo, paneAudio, paneSubs, panePlaylist, subFind, subStyle, subSync;
-    private TabLayout tabs;
-    private LinearProgressIndicator torrentProgress;
+    private View[] panes;
+    private View subFind, subStyle, subSync;
+    private LinearProgressIndicator torrentProgress, plProgress;
+    private MaterialCardView torrentCard;
+    private TextView tvPlTitle, tvPlState;
     private LinearLayout playlistRows;
     private TextView tvPlaylistHeader;
     private String playlistSig = "";
@@ -113,12 +142,6 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     // torrent playlist (the TV owns the files, this screen only picks one)
     private String torrentTitleSeen = "";
     private boolean torrentPromptShown = false;
-
-    private static final int TAB_PLAYLIST = 3;
-    private static final String[] TAB_NAMES = {"Video", "Audio", "Subtitles", "Playlist"};
-
-    /** Where the Playlist tab's rows come from. */
-    private static final int MODE_SINGLE = 0, MODE_LOCAL = 1, MODE_TORRENT = 2;
 
     private static final class Row {
         final String name;
@@ -136,6 +159,8 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        generatedColors = Appearance.apply(this);
+        appearanceSig = appearanceSignature();
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_control);
 
@@ -145,12 +170,14 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             return;
         }
         usage = new UsageStore(this);
+        prefs = Appearance.prefs(this);
         tvName = device.serviceName;
 
         bindViews();
         setupToolbar();
+        setupNav(savedInstanceState == null ? 0 : savedInstanceState.getInt("tab", 0));
+        setupSections();
         setupPlayer();
-        setupTabs();
         setupVideo();
         setupAudio();
         setupSubtitles();
@@ -159,6 +186,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         updateSpeedUi();
         updateAudioUi();
         updateSubUi();
+        updateVolumeUi();
         updateStyleUi();
         updateDrUi();
         setConnectedUi(false);
@@ -167,14 +195,34 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         client.start();
     }
 
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle out) {
+        super.onSaveInstanceState(out);
+        if (nav != null) out.putInt("tab", nav.selected());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Settings may have changed the colours or the navigation bar.
+        if (!appearanceSig.isEmpty() && !appearanceSig.equals(appearanceSignature())) recreate();
+    }
+
+    private String appearanceSignature() {
+        return Appearance.floating(this) + "|" + Appearance.frosted(this) + "|" + Appearance.deviceColors(this)
+                + "|" + Appearance.accent(this) + "|" + Appearance.customColor(this);
+    }
+
     // ------------------------------------------------------------ setup
 
     private void bindViews() {
         root = findViewById(R.id.root);
         banner = findViewById(R.id.banner);
         toolbar = findViewById(R.id.toolbar);
+        scroll = findViewById(R.id.scroll);
         tvTitle = findViewById(R.id.tv_title);
         tvState = findViewById(R.id.tv_state);
+        tvDesc = findViewById(R.id.tv_desc);
         tvPos = findViewById(R.id.tv_pos);
         tvLen = findViewById(R.id.tv_len);
         tvVolume = findViewById(R.id.tv_volume);
@@ -192,6 +240,8 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         btnPlay = findViewById(R.id.btn_play);
         btnFwd10 = findViewById(R.id.btn_fwd10);
         btnPasteVideo = findViewById(R.id.btn_paste_video);
+        btnVolLess = findViewById(R.id.btn_vol_less);
+        btnVolMore = findViewById(R.id.btn_vol_more);
         btnSlower = findViewById(R.id.btn_slower);
         btnFaster = findViewById(R.id.btn_faster);
         btnSdr = findViewById(R.id.btn_sdr);
@@ -214,23 +264,24 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         etLang = findViewById(R.id.et_lang);
         results = findViewById(R.id.results);
         swatches = findViewById(R.id.swatches);
-        paneVideo = findViewById(R.id.pane_video);
-        paneAudio = findViewById(R.id.pane_audio);
-        paneSubs = findViewById(R.id.pane_subs);
-        panePlaylist = findViewById(R.id.pane_playlist);
-        tabs = findViewById(R.id.tabs);
-        torrentProgress = findViewById(R.id.torrent_progress);
-        playlistRows = findViewById(R.id.playlist_rows);
-        tvPlaylistHeader = findViewById(R.id.tv_playlist_header);
+        panes = new View[]{findViewById(R.id.pane_controls), findViewById(R.id.pane_playback),
+                findViewById(R.id.pane_subs), findViewById(R.id.pane_playlist)};
         subFind = findViewById(R.id.sub_find);
         subStyle = findViewById(R.id.sub_style);
         subSync = findViewById(R.id.sub_sync);
+        torrentProgress = findViewById(R.id.torrent_progress);
+        torrentCard = findViewById(R.id.torrent_card);
+        tvPlTitle = findViewById(R.id.tv_pl_title);
+        tvPlState = findViewById(R.id.tv_pl_state);
+        plProgress = findViewById(R.id.pl_progress);
+        playlistRows = findViewById(R.id.playlist_rows);
+        tvPlaylistHeader = findViewById(R.id.tv_playlist_header);
     }
 
     private void collectControls() {
-        View[] all = {seek, volume, btnBack10, btnPlay, btnFwd10, btnPasteVideo, btnSlower, btnFaster, btnSdr, btnHdr,
-                btnAudioLess, btnAudioMore, btnAudioReset, btnSubLess, btnSubMore, btnSubReset, btnPasteSub,
-                tilAudio, tilSubtitle, slSize, slBg, swBold,
+        View[] all = {seek, volume, btnBack10, btnPlay, btnFwd10, btnPasteVideo, btnVolLess, btnVolMore, btnSlower,
+                btnFaster, btnSdr, btnHdr, btnAudioLess, btnAudioMore, btnAudioReset, btnSubLess, btnSubMore,
+                btnSubReset, btnPasteSub, tilAudio, tilSubtitle, slSize, slBg, swBold,
                 findViewById(R.id.ol_none), findViewById(R.id.ol_thin), findViewById(R.id.ol_normal),
                 findViewById(R.id.ol_thick)};
         for (View v : all) controls.add(v);
@@ -243,8 +294,20 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         toolbar.setNavigationOnClickListener(v -> finish());
         toolbar.setSubtitleTextColor(color(R.color.error));
         toolbar.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == R.id.action_rename) {
+            int id = item.getItemId();
+            if (id == R.id.action_rename) {
                 showRenameDialog();
+                return true;
+            }
+            if (id == R.id.action_updates) {
+                // the phone checks itself; the TV is asked to check too when it's connected
+                if (connected) send("CHECK_UPDATE");
+                UpdateDialog.checkNow(this, text -> snack(connected && text.startsWith("Checking")
+                        ? "Checking for updates on this phone and the TV…" : text));
+                return true;
+            }
+            if (id == R.id.action_settings) {
+                startActivity(new Intent(this, SettingsActivity.class));
                 return true;
             }
             return false;
@@ -252,11 +315,67 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         toolbar.setTitle(tvName);
     }
 
+    private void setupNav(int tab) {
+        nav = new NavBar(this, findViewById(R.id.nav_host), TAB_NAMES, TAB_ICONS,
+                Appearance.floating(this), Appearance.frosted(this), generatedColors, this::showPane);
+        // the content scrolls on under the bar; leave room so its end can scroll clear of it
+        scroll.setPadding(0, 0, 0, nav.reservedHeight());
+        nav.select(tab);
+        showPane(tab);
+    }
+
+    private void showPane(int index) {
+        for (int i = 0; i < panes.length; i++) panes[i].setVisibility(i == index ? View.VISIBLE : View.GONE);
+        scroll.scrollTo(0, 0);
+        if (index == TAB_PLAYLIST) refreshPlaylist();
+    }
+
+    private void selectTab(int index) {
+        nav.select(index);
+        showPane(index);
+    }
+
+    /** Every grey heading collapses the section under it; the state is remembered per heading. */
+    private void setupSections() {
+        section(R.id.h_volume, R.id.s_volume, "volume");
+        section(R.id.h_speed, R.id.s_speed, "speed");
+        section(R.id.h_audio_track, R.id.s_audio_track, "audio_track");
+        section(R.id.h_audio_sync, R.id.s_audio_sync, "audio_sync");
+        section(R.id.h_dynamic_range, R.id.s_dynamic_range, "dynamic_range");
+        section(R.id.h_sub_track, R.id.s_sub_track, "sub_track");
+        section(R.id.h_sub_search, R.id.s_sub_search, "sub_search");
+        section(R.id.h_sub_size, R.id.s_sub_size, "sub_size");
+        section(R.id.h_sub_color, R.id.s_sub_color, "sub_color");
+        section(R.id.h_sub_outline, R.id.s_sub_outline, "sub_outline");
+        section(R.id.h_sub_bg, R.id.s_sub_bg, "sub_bg");
+        section(R.id.h_sub_sync, R.id.s_sub_sync, "sub_sync");
+    }
+
+    private void section(int headId, int bodyId, final String key) {
+        final ViewGroup head = findViewById(headId);
+        final View body = findViewById(bodyId);
+        final ImageView arrow = (ImageView) head.getChildAt(head.getChildCount() - 1);
+        final String label = ((TextView) head.getChildAt(0)).getText().toString();
+        final String pref = "collapse_" + key;
+        setCollapsed(head, body, arrow, label, prefs.getBoolean(pref, false));
+        head.setOnClickListener(v -> {
+            boolean collapse = body.getVisibility() == View.VISIBLE;
+            setCollapsed(head, body, arrow, label, collapse);
+            prefs.edit().putBoolean(pref, collapse).apply();
+        });
+    }
+
+    private static void setCollapsed(View head, View body, ImageView arrow, String label, boolean collapsed) {
+        body.setVisibility(collapsed ? View.GONE : View.VISIBLE);
+        arrow.setImageResource(collapsed ? R.drawable.ic_expand_more : R.drawable.ic_expand_less);
+        head.setContentDescription(label + (collapsed ? ", collapsed" : ", expanded"));
+    }
+
     private void setupPlayer() {
         btnPlay.setOnClickListener(v -> {
             boolean playing = "playing".equals(last.state) || "buffering".equals(last.state)
                     || "opening".equals(last.state);
-            send(playing ? "PAUSE" : "RESUME");
+            send(playing ? "PAUSE" : "RESUME"); // RESUME also replays a video that ended
         });
         btnBack10.setOnClickListener(v -> send("SEEK_REL:-10000"));
         btnFwd10.setOnClickListener(v -> send("SEEK_REL:10000"));
@@ -279,39 +398,10 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         });
 
         volume.addOnChangeListener((s, value, fromUser) -> {
-            tvVolume.setText(((int) value) + "%");
-            if (fromUser) {
-                holdVol = hold();
-                send("VOLUME:" + (int) value);
-            }
+            if (fromUser) setVolume((int) value);
         });
-    }
-
-    private void setupTabs() {
-        // The tabs show icons only; the names are kept for TalkBack and as long-press tooltips.
-        for (int i = 0; i < tabs.getTabCount() && i < TAB_NAMES.length; i++) {
-            TabLayout.Tab t = tabs.getTabAt(i);
-            if (t != null) t.setContentDescription(TAB_NAMES[i]);
-        }
-        tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
-            @Override
-            public void onTabSelected(TabLayout.Tab tab) {
-                int p = tab.getPosition();
-                paneVideo.setVisibility(p == 0 ? View.VISIBLE : View.GONE);
-                paneAudio.setVisibility(p == 1 ? View.VISIBLE : View.GONE);
-                paneSubs.setVisibility(p == 2 ? View.VISIBLE : View.GONE);
-                panePlaylist.setVisibility(p == TAB_PLAYLIST ? View.VISIBLE : View.GONE);
-                if (p == TAB_PLAYLIST) refreshPlaylist();
-            }
-
-            @Override
-            public void onTabUnselected(TabLayout.Tab tab) {
-            }
-
-            @Override
-            public void onTabReselected(TabLayout.Tab tab) {
-            }
-        });
+        btnVolLess.setOnClickListener(v -> setVolume(volumeValue - VOLUME_STEP));
+        btnVolMore.setOnClickListener(v -> setVolume(volumeValue + VOLUME_STEP));
     }
 
     private void setupVideo() {
@@ -369,8 +459,11 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         btnPasteSub.setOnClickListener(v -> pasteSubtitle());
         btnSearch.setOnClickListener(v -> searchSubtitles());
         etQuery.setOnEditorActionListener((v, actionId, event) -> {
-            searchSubtitles();
-            return true;
+            if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_NULL) {
+                searchSubtitles();
+                return true;
+            }
+            return false;
         });
 
         // style
@@ -413,6 +506,13 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     }
 
     // ------------------------------------------------------------ actions
+
+    private void setVolume(int v) {
+        volumeValue = Math.max(0, Math.min(100, v));
+        holdVol = hold();
+        updateVolumeUi();
+        send("VOLUME:" + volumeValue);
+    }
 
     private void setSpeed(float v) {
         speed = Math.round(Math.max(SPEED_MIN, Math.min(SPEED_MAX, v)) * 100f) / 100f;
@@ -518,6 +618,8 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         }
     }
 
+    // ------------------------------------------------------------ torrent + playlist
+
     /** The torrent status line. The TV writes it (it runs the engine); older TVs get a local fallback. */
     private String torrentLabel(TvStatus s) {
         String st = s.torrentState;
@@ -528,9 +630,6 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         switch (st) {
             case "metadata":
                 b.append("loading torrent…");
-                break;
-            case "choosing":
-                b.append("choose a video in the playlist");
                 break;
             case "checking":
                 b.append("checking downloaded videos");
@@ -572,8 +671,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         if (!"choosing".equals(s.torrentState)) return;
         if (torrentRows(s).size() <= 1) return;
         torrentPromptShown = true;
-        TabLayout.Tab t = tabs.getTabAt(TAB_PLAYLIST);
-        if (t != null && !t.isSelected()) t.select();
+        if (nav.selected() != TAB_PLAYLIST) selectTab(TAB_PLAYLIST);
         snack("Choose a video from the torrent");
     }
 
@@ -601,17 +699,23 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         String message = null;
         String tState = s.torrentState == null ? "" : s.torrentState;
         List<CastService.Entry> local = CastService.playlist();
-        if (!tState.isEmpty()) {
+
+        boolean torrent = !tState.isEmpty();
+        torrentCard.setVisibility(torrent ? View.VISIBLE : View.GONE);
+        if (torrent) {
+            tvPlTitle.setText(s.torrentTitle == null || s.torrentTitle.isEmpty() ? "Torrent" : s.torrentTitle);
+            tvPlState.setText(torrentLabel(s));
+            plProgress.setVisibility(connected && torrentLoading(s) ? View.VISIBLE : View.GONE);
+        }
+
+        if (torrent) {
             mode = MODE_TORRENT;
             current = s.torrentSelected;
             rows.addAll(torrentRows(s));
             header = "Videos in this torrent";
             if (rows.isEmpty()) {
-                if (tState.equals("error")) {
-                    message = "The torrent couldn't be loaded.";
-                } else {
-                    message = "Loading torrent… the list appears as soon as the TV has the torrent's file list.";
-                }
+                message = tState.equals("error") ? "The torrent couldn't be loaded."
+                        : "The list appears as soon as the TV has the torrent's file list.";
             }
         } else if (local != null && !local.isEmpty()) {
             mode = MODE_LOCAL;
@@ -620,12 +724,12 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
                 CastService.Entry e = local.get(i);
                 rows.add(new Row(e.name, e.subtitles, i, 0));
             }
-            header = "Shared from this phone";
+            header = "Videos in this share";
         } else {
             // A single link: the playlist is just that one video.
             mode = MODE_SINGLE;
             current = 0;
-            header = "Playlist";
+            header = "";
             String title = s.title == null ? "" : s.title.trim();
             if (connected && !title.isEmpty()) rows.add(new Row(title, 0, 0, 0));
             else message = connected ? "Nothing is playing on the TV." : "Waiting for the TV app…";
@@ -638,12 +742,13 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         playlistSig = sig.toString();
 
         tvPlaylistHeader.setText(header);
+        tvPlaylistHeader.setVisibility(header.isEmpty() ? View.GONE : View.VISIBLE);
         playlistRows.removeAllViews();
         if (message != null) {
             TextView t = new TextView(this);
             t.setText(message);
             t.setTextSize(14);
-            t.setTextColor(color(R.color.on_surface_variant));
+            t.setTextColor(attr("colorOnSurfaceVariant", Color.DKGRAY));
             t.setPadding(dp(4), dp(8), dp(4), dp(8));
             playlistRows.addView(t);
             return;
@@ -657,7 +762,9 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             ((TextView) row.findViewById(R.id.name)).setText(r.name);
             TextView detail = row.findViewById(R.id.detail);
             List<String> bits = new ArrayList<>();
-            if (isCurrent && rows.size() > 1) bits.add(mode == MODE_TORRENT && torrentLoading(s) ? "Loading" : "Playing");
+            if (isCurrent && rows.size() > 1) {
+                bits.add(mode == MODE_TORRENT && torrentLoading(s) ? "Loading" : "Playing");
+            }
             if (r.size > 0) bits.add(humanSize(r.size));
             if (r.subs > 0) bits.add(r.subs + (r.subs == 1 ? " subtitle" : " subtitles"));
             if (!bits.isEmpty()) {
@@ -666,8 +773,9 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             }
             ImageView now = row.findViewById(R.id.now);
             now.setVisibility(isCurrent ? View.VISIBLE : View.GONE);
-            com.google.android.material.card.MaterialCardView card = (com.google.android.material.card.MaterialCardView) row;
-            card.setCardBackgroundColor(color(isCurrent ? R.color.secondary_container : R.color.surface_container));
+            MaterialCardView card = (MaterialCardView) row;
+            card.setCardBackgroundColor(attr(isCurrent ? "colorSecondaryContainer" : "colorSurfaceContainer",
+                    Color.LTGRAY));
             boolean pickable = mode != MODE_SINGLE && !isCurrent && connected;
             row.setAlpha(connected ? 1f : DISABLED_ALPHA);
             if (pickable) {
@@ -699,7 +807,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         et.setText(tvName);
         et.setSelection(et.getText().length());
         new MaterialAlertDialogBuilder(this)
-                .setTitle("Rename TV")
+                .setTitle("Edit name")
                 .setView(v)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (d, w) -> {
@@ -715,6 +823,12 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     }
 
     // ------------------------------------------------------------ UI updaters
+
+    private void updateVolumeUi() {
+        tvVolume.setText(volumeValue + "%");
+        float v = Math.max(0, Math.min(100, volumeValue));
+        if (volume.getValue() != v) volume.setValue(v);
+    }
 
     private void updateSpeedUi() {
         tvSpeed.setText(String.format(Locale.US, "%.2fx", speed));
@@ -748,24 +862,27 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         if (ol > 0) preview.setShadowLayer(ol, 0, 0, Color.BLACK);
         else preview.setShadowLayer(0, 0, 0, 0);
         preview.setBackgroundColor(Color.argb(bg * 255 / 100, 0, 0, 0));
+        int primary = attr("colorPrimary", 0xFFA43E00);
+        int outlineVariant = attr("colorOutlineVariant", Color.LTGRAY);
         for (int i = 0; i < swatchViews.size(); i++) {
             boolean sel = i == colorIdx;
             GradientDrawable g = new GradientDrawable();
             g.setShape(GradientDrawable.OVAL);
             g.setColor(0xFF000000 | COLORS[i]);
-            g.setStroke(dp(sel ? 3 : 1), color(sel ? R.color.primary : R.color.outline_variant));
+            g.setStroke(dp(sel ? 3 : 1), sel ? primary : outlineVariant);
             swatchViews.get(i).setBackground(g);
         }
     }
 
     /** Outlined button; the selected one is filled (accent) or tonal. */
     private void styleChoice(MaterialButton b, boolean selected, boolean filled) {
-        int bg = selected ? color(filled ? R.color.primary : R.color.secondary_container) : Color.TRANSPARENT;
-        int fg = selected ? color(filled ? R.color.on_primary : R.color.on_secondary_container)
-                : color(filled ? R.color.primary : R.color.on_surface);
+        int primary = attr("colorPrimary", 0xFFA43E00);
+        int bg = selected ? (filled ? primary : attr("colorSecondaryContainer", Color.LTGRAY)) : Color.TRANSPARENT;
+        int fg = selected ? attr(filled ? "colorOnPrimary" : "colorOnSecondaryContainer", Color.BLACK)
+                : (filled ? primary : attr("colorOnSurface", Color.BLACK));
         b.setBackgroundTintList(ColorStateList.valueOf(bg));
         b.setTextColor(fg);
-        b.setStrokeColor(ColorStateList.valueOf(selected ? bg : color(R.color.outline_variant)));
+        b.setStrokeColor(ColorStateList.valueOf(selected ? bg : attr("colorOutlineVariant", Color.LTGRAY)));
         b.setStrokeWidth(dp(1));
     }
 
@@ -779,9 +896,8 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             v.setEnabled(enabled);
             v.setAlpha(enabled ? 1f : DISABLED_ALPHA);
         }
-        if (toolbar.getMenu().findItem(R.id.action_rename) != null) {
-            toolbar.getMenu().findItem(R.id.action_rename).setEnabled(enabled);
-        }
+        MenuItem rename = toolbar.getMenu().findItem(R.id.action_rename);
+        if (rename != null) rename.setVisible(enabled); // editing the name needs the TV
         for (int i = 0; i < results.getChildCount(); i++) {
             View row = results.getChildAt(i);
             View send = row.findViewById(R.id.send);
@@ -823,25 +939,18 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             toolbar.setTitle(tvName);
         }
 
-        tvTitle.setText(s.title == null || s.title.isEmpty() ? "Nothing playing" : s.title);
-        if (state.equals("error")) {
-            tvState.setText("TV couldn't load this video");
-            tvState.setTextColor(color(R.color.error));
-        } else {
-            tvState.setTextColor(color(R.color.on_surface_variant));
-            tvState.setText(stateLabel(state, s.rate));
-        }
+        String title = s.title == null || s.title.isEmpty() ? "" : s.title;
+        if (title.isEmpty() && s.torrentTitle != null && !s.torrentTitle.isEmpty()) title = s.torrentTitle;
+        tvTitle.setText(title.isEmpty() ? "Nothing playing" : title);
+
+        // line 1: what the player is doing; line 2: what the TV is doing (torrent progress and the like)
         String torrent = torrentLabel(s);
-        if (!torrent.isEmpty()) {
-            boolean failed = "error".equals(s.torrentState);
-            tvState.setTextColor(color(failed ? R.color.error : R.color.on_surface_variant));
-            boolean watching = "streaming".equals(s.torrentState)
-                    && (state.equals("playing") || state.equals("paused") || state.equals("ended"));
-            tvState.setText(watching ? stateLabel(state, s.rate) + " · " + torrent : torrent);
-            if ((s.title == null || s.title.isEmpty()) && s.torrentTitle != null && !s.torrentTitle.isEmpty()) {
-                tvTitle.setText(s.torrentTitle);
-            }
-        }
+        boolean failed = state.equals("error") || "error".equals(s.torrentState);
+        tvState.setTextColor(failed ? color(R.color.error) : attr("colorOnSurfaceVariant", Color.DKGRAY));
+        if (state.equals("error")) tvState.setText("TV couldn't load this video");
+        else tvState.setText(stateLabel(state, s.rate, !torrent.isEmpty()));
+        tvDesc.setText(torrent);
+        tvDesc.setVisibility(torrent.isEmpty() ? View.GONE : View.VISIBLE);
         torrentProgress.setVisibility(connected && torrentLoading(s) ? View.VISIBLE : View.GONE);
         maybeShowTorrentPlaylist(s);
         refreshPlaylist();
@@ -855,7 +964,13 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         }
         tvLen.setText(s.length > 0 ? fmt(s.length) : "--:--");
 
-        if (!held(holdVol)) volume.setValue(Math.max(0, Math.min(100, s.volume)));
+        if (!held(holdVol)) {
+            int v = Math.max(0, Math.min(100, s.volume));
+            if (v != volumeValue) {
+                volumeValue = v;
+                updateVolumeUi();
+            }
+        }
         if (!held(holdSpeed)) {
             float r = Math.round(Math.max(SPEED_MIN, Math.min(SPEED_MAX, s.rate)) * 100f) / 100f;
             if (r != speed) {
@@ -898,7 +1013,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         }
     }
 
-    private String stateLabel(String state, float rate) {
+    private String stateLabel(String state, float rate, boolean torrent) {
         String r = shortNum.format(rate) + "×";
         switch (state) {
             case "playing":
@@ -907,7 +1022,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
                 return "Paused · " + r;
             case "opening":
             case "buffering":
-                return "Loading…";
+                return torrent ? "Preparing" : "Loading…";
             case "stopped":
                 return "Stopped";
             case "ended":
@@ -917,26 +1032,43 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         }
     }
 
+    private static String sourceLabel(String source) {
+        if (source == null) return "";
+        switch (source) {
+            case "torrent":
+                return "from the torrent";
+            case "phone":
+                return "sent from Ping!";
+            case "video":
+                return "in the video";
+            default:
+                return "";
+        }
+    }
+
     private void syncTracks(MaterialAutoCompleteTextView dd, List<Integer> ids, List<TvStatus.Track> tracks,
                             int current, boolean audio) {
         StringBuilder sig = new StringBuilder();
-        if (tracks != null) for (TvStatus.Track t : tracks) sig.append(t.id).append(':').append(t.name).append('|');
+        if (tracks != null) {
+            for (TvStatus.Track t : tracks) sig.append(t.id).append(':').append(t.name).append(':').append(t.source).append('|');
+        }
         String oldSig = audio ? audioSig : spuSig;
+        List<String> names = new ArrayList<>();
+        if (tracks != null) {
+            for (TvStatus.Track t : tracks) {
+                String src = audio ? "" : sourceLabel(t.source);
+                names.add(src.isEmpty() ? t.name : t.name + " · " + src);
+            }
+        }
         if (!sig.toString().equals(oldSig)) {
             if (audio) audioSig = sig.toString();
             else spuSig = sig.toString();
             ids.clear();
-            List<String> names = new ArrayList<>();
-            if (tracks != null) {
-                for (TvStatus.Track t : tracks) {
-                    ids.add(t.id);
-                    names.add(t.name);
-                }
-            }
+            if (tracks != null) for (TvStatus.Track t : tracks) ids.add(t.id);
             dd.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, names));
         }
         int idx = ids.indexOf(current);
-        if (idx >= 0 && tracks != null && idx < tracks.size()) dd.setText(tracks.get(idx).name, false);
+        if (idx >= 0 && idx < names.size()) dd.setText(names.get(idx), false);
         else dd.setText("", false);
     }
 
@@ -944,7 +1076,8 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
 
     private void searchSubtitles() {
         final String query = etQuery.getText().toString().trim();
-        final String lang = etLang.getText().toString().trim();
+        String l = etLang.getText().toString().trim();
+        final String lang = l.isEmpty() ? "en" : l; // the box shows "en" as its placeholder
         if (query.isEmpty()) {
             snack("Enter a movie or show name");
             return;
@@ -994,7 +1127,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         TextView t = new TextView(this);
         t.setText(text);
         t.setTextSize(14);
-        t.setTextColor(color(R.color.on_surface_variant));
+        t.setTextColor(attr("colorOnSurfaceVariant", Color.DKGRAY));
         t.setPadding(dp(4), dp(8), dp(4), dp(8));
         results.addView(t);
     }
@@ -1041,11 +1174,17 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         sb.setTextColor(color(R.color.snack_text));
         sb.setActionTextColor(color(R.color.snack_action));
         sb.setAction("Dismiss", v -> sb.dismiss());
+        // keep it above the navigation bar
+        if (nav != null) sb.getView().setTranslationY(-nav.reservedHeight());
         sb.show();
     }
 
     private int color(int res) {
         return ContextCompat.getColor(this, res);
+    }
+
+    private int attr(String name, int fallback) {
+        return Appearance.color(this, name, fallback);
     }
 
     private int dp(int v) {

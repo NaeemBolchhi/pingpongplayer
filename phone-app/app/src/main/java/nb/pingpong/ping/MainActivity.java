@@ -38,6 +38,8 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        Appearance.apply(this);
+        appearanceSig = appearanceSignature();
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
@@ -47,6 +49,15 @@ public class MainActivity extends AppCompatActivity {
             if (item.getItemId() == R.id.action_scan) {
                 autoOpenArmed = true;
                 startScan();
+                return true;
+            }
+            if (item.getItemId() == R.id.action_updates) {
+                UpdateDialog.checkNow(this, text -> android.widget.Toast.makeText(this, text,
+                        android.widget.Toast.LENGTH_SHORT).show());
+                return true;
+            }
+            if (item.getItemId() == R.id.action_settings) {
+                startActivity(new android.content.Intent(this, SettingsActivity.class));
                 return true;
             }
             return false;
@@ -68,7 +79,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onStart() {
         super.onStart();
+        // Settings may have changed the colours
+        if (!appearanceSig.equals(appearanceSignature())) {
+            recreate();
+            return;
+        }
         startScan();
+    }
+
+    private String appearanceSig = "";
+
+    private String appearanceSignature() {
+        return Appearance.deviceColors(this) + "|" + Appearance.accent(this) + "|" + Appearance.customColor(this);
     }
 
     @Override

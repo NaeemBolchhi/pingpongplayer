@@ -15,7 +15,7 @@ android {
         minSdk 21
         targetSdk 34
         versionCode = Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
-        versionName "1.1.1"
+        versionName "1.2.0"
         // the repository that built the app (set by GitHub Actions; empty for local builds, which turns update checks off)
         buildConfigField "String", "UPDATE_REPO", "\"${System.getenv('GITHUB_REPOSITORY') ?: ''}\""
     }
@@ -149,7 +149,9 @@ tasks.matching { it.name == 'preBuild' }.configureEach { dependsOn 'generateSubs
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.9.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    // frosted navigation bar
+    implementation 'com.github.Dimezis:BlurView:version-2.0.3'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.recyclerview:recyclerview:1.3.1'
     implementation 'com.google.code.gson:gson:2.10.1'
