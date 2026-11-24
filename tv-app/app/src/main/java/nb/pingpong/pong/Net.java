@@ -84,6 +84,11 @@ final class Net {
         return true;
     }
 
+    /** Resolves a host with the same system-DNS-then-DoH policy used for HTTP streams. */
+    static java.util.List<InetAddress> resolve(String host) throws IOException {
+        return client().dns().lookup(host);
+    }
+
     static Request.Builder request(String url, String userAgent, String referer) throws IOException {
         HttpUrl parsed = HttpUrl.parse(url);
         if (parsed == null) throw new IOException("Bad address");

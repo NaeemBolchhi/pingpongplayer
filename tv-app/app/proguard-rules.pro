@@ -12,6 +12,10 @@
 #   public *;
 #}
 
+# libtorrent4j calls these JNI entry points by name.
+-keep class org.libtorrent4j.swig.libtorrent_jni { *; }
+-keep class org.libtorrent4j.** { *; }
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable

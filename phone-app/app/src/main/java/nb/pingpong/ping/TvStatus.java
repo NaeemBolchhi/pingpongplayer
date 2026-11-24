@@ -10,6 +10,14 @@ public class TvStatus {
         public String name;
     }
 
+    /** A video file found in the torrent currently loaded on the TV. */
+    public static class TorrentFile {
+        public int index = -1;      // libtorrent file index, used by TORRENT_FILE:<index>
+        public String name = "";
+        public long size;
+        public int subtitles;       // matching subtitle files inside the torrent
+    }
+
     public String name = "";
     public String state = "idle";
     public String title = "";
@@ -31,4 +39,14 @@ public class TvStatus {
     public boolean subBold = false;
     public int subBg = 0;
     public boolean hdr = false;
+
+    // torrent playback (empty when the TV isn't playing a magnet)
+    public String torrentState = ""; // metadata, choosing, buffering, streaming, error
+    public String torrentTitle = "";
+    public int torrentSelected = -1;
+    public int torrentPeers;
+    public int torrentRate;          // bytes per second
+    public int torrentProgress;      // 0..100 of the selected file
+    public String torrentError = "";
+    public List<TorrentFile> torrentFiles = new ArrayList<>();
 }

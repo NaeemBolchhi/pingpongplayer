@@ -8,6 +8,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 
@@ -28,6 +29,11 @@ final class SubtitleServer {
 
     /** Starts serving {@code data} and returns the URL the TV should fetch. */
     static String serve(final byte[] data, String ext, String tvHost, int tvPort) throws IOException {
+        return serve(data, ext, tvHost, tvPort, null);
+    }
+
+    /** As above, with a display name the TV can use as the subtitle track name. */
+    static String serve(final byte[] data, String ext, String tvHost, int tvPort, String name) throws IOException {
         InetAddress local = localAddressToward(tvHost, tvPort);
         final ServerSocket server = new ServerSocket(0);
         byte[] rnd = new byte[12];
@@ -35,7 +41,11 @@ final class SubtitleServer {
         StringBuilder tok = new StringBuilder();
         for (byte b : rnd) tok.append(String.format("%02x", b));
         final String path = "/" + tok + "/subtitle" + ext;
-        final String url = "http://" + local.getHostAddress() + ":" + server.getLocalPort() + path;
+        String query = "";
+        if (name != null && !name.isEmpty()) {
+            query = "?name=" + URLEncoder.encode(name, "UTF-8").replace("+", "%20");
+        }
+        final String url = "http://" + local.getHostAddress() + ":" + server.getLocalPort() + path + query;
 
         Thread t = new Thread(() -> {
             long deadline = System.currentTimeMillis() + LIFETIME_MS;
@@ -78,7 +88,12 @@ final class SubtitleServer {
             // skip headers
         }
         OutputStream out = s.getOutputStream();
-        boolean ok = request != null && request.startsWith("GET " + path + " ");
+        String target = request != null && request.length() >= 4 ? request.substring(4) : ""; // after "GET "
+        int q = target.indexOf(' ');
+        if (q >= 0) target = target.substring(0, q);
+        q = target.indexOf('?');
+        if (q >= 0) target = target.substring(0, q);
+        boolean ok = request != null && request.startsWith("GET ") && path.equals(target);
         if (!ok) {
             out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     .getBytes(StandardCharsets.ISO_8859_1));
@@ -93,7 +108,7 @@ final class SubtitleServer {
     }
 
     /** The phone's own address on the network that reaches the TV (connecting a UDP socket sends nothing). */
-    private static InetAddress localAddressToward(String host, int port) throws IOException {
+    static InetAddress localAddressToward(String host, int port) throws IOException {
         try (DatagramSocket ds = new DatagramSocket()) {
             ds.connect(InetAddress.getByName(host), port);
             InetAddress a = ds.getLocalAddress();

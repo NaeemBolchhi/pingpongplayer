@@ -39,6 +39,7 @@ import org.videolan.libvlc.util.VLCVideoLayout;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -65,7 +66,7 @@ public class MainActivity extends FragmentActivity {
     private MediaPlayer mediaPlayer;
     private View controlsOverlay;
     private SeekBar seekBar;
-    private TextView tvTimeCur, tvTimeTotal, tvIdleChip, tvTitle, tvLoadingTitle;
+    private TextView tvTimeCur, tvTimeTotal, tvIdleChip, tvTitle, tvLoadingTitle, tvLoadingStatus;
     private View idleContainer, loadingOverlay, confirmOverlay, topBar, bottomBar, seekGlowLeft, seekGlowRight;
     private ImageButton btnPlayPause, btnBackNav, btnBack10, btnFwd10;
     private Button btnErrorOk, btnConfirmKeep, btnConfirmStop;
@@ -76,6 +77,7 @@ public class MainActivity extends FragmentActivity {
     private ProgressBar updateBar;
     private Button btnUpdateNow, btnUpdateLater, btnUpdateNever;
     private volatile boolean updateShown = false;
+    private volatile boolean checkingUpdate = false;
     private boolean updating = false;
     private UpdateChecker.Update pendingUpdate;
     private View errorOverlay;
@@ -111,6 +113,12 @@ public class MainActivity extends FragmentActivity {
     private volatile String currentTitle = "";
     private final List<File> subtitleFiles = new ArrayList<>();
 
+    // torrent playback
+    private TorrentStreamer torrents;
+    private volatile TorrentStreamer.Snapshot lastTorrent;
+    private volatile boolean currentIsTorrent;
+    private String torrentUnavailable = "Torrent playback isn't available on this TV";
+
     // subtitle style / display settings (persisted)
     private int subSize, subColor, subOutline, subBg;
     private boolean subBold, hdr;
@@ -137,6 +145,7 @@ public class MainActivity extends FragmentActivity {
         tvIdleChip = findViewById(R.id.tv_idle_chip);
         loadingOverlay = findViewById(R.id.loading_overlay);
         tvLoadingTitle = findViewById(R.id.tv_loading_title);
+        tvLoadingStatus = findViewById(R.id.tv_loading_status);
         confirmOverlay = findViewById(R.id.confirm_overlay);
         updateOverlay = findViewById(R.id.update_overlay);
         tvUpdateMsg = findViewById(R.id.tv_update_msg);
@@ -176,6 +185,7 @@ public class MainActivity extends FragmentActivity {
 
         createPlayer();
         applyHdr();
+        setupTorrents();
 
         btnPlayPause.setOnClickListener(v -> {
             togglePlayPause();
@@ -207,6 +217,130 @@ public class MainActivity extends FragmentActivity {
         handler.postDelayed(updateUiRunnable, 500);
         registerService();
         startUdpServer();
+    }
+
+    // --------------------------------------------------------------- torrent playback
+
+    private void setupTorrents() {
+        // Old downloads are never kept across an app start.
+        TorrentStreamer.clear(this);
+        try {
+            torrents = TorrentStreamer.get(this, new TorrentStreamer.Listener() {
+                @Override
+                public void onReady(String url, String title) {
+                    runOnUiThread(() -> {
+                        if (!currentIsTorrent) return;
+                        currentUrl = url;
+                        currentTitle = title == null || title.isEmpty() ? currentTitle : title;
+                        startMedia(url, 0, true);
+                    });
+                }
+
+                @Override
+                public void onState(TorrentStreamer.Snapshot s) {
+                    runOnUiThread(() -> {
+                        lastTorrent = s;
+                        if (currentIsTorrent) updateTorrentUi(s);
+                    });
+                }
+
+                @Override
+                public void onError(String message) {
+                    runOnUiThread(() -> {
+                        if (currentIsTorrent) showError(message);
+                    });
+                }
+
+                @Override
+                public void onSubtitles(List<File> files) {
+                    runOnUiThread(() -> {
+                        if (currentIsTorrent) addTorrentSubtitles(files);
+                    });
+                }
+            });
+        } catch (TorrentStreamer.Unavailable e) {
+            torrents = null;
+            torrentUnavailable = e.getMessage() == null ? "Torrent playback isn't available on this TV" : e.getMessage();
+        }
+    }
+
+    private void updateTorrentUi(TorrentStreamer.Snapshot s) {
+        if (s == null) return;
+        if (s.title != null && !s.title.isEmpty()) currentTitle = s.title;
+        tvLoadingTitle.setText(currentTitle);
+        String text;
+        switch (s.state) {
+            case "metadata":
+                text = "Looking for peers…";
+                break;
+            case "choosing":
+                text = "Choose a video on the phone";
+                break;
+            case "buffering":
+                text = "Buffering " + s.progress + "% · " + s.peers + " peers · " + humanRate(s.rate);
+                break;
+            case "streaming":
+                text = s.progress + "% · " + s.peers + " peers · " + humanRate(s.rate);
+                break;
+            default:
+                text = s.error == null || s.error.isEmpty() ? "Loading…" : s.error;
+                break;
+        }
+        tvLoadingStatus.setText(text);
+    }
+
+    private static String humanRate(int bytes) {
+        if (bytes <= 0) return "0 KB/s";
+        if (bytes >= 1024 * 1024) return String.format(java.util.Locale.ROOT, "%.1f MB/s", bytes / 1048576.0);
+        return (bytes / 1024) + " KB/s";
+    }
+
+    /** Adds the sidecar subtitles found in the torrent, converted to SRT where needed. */
+    private void addTorrentSubtitles(List<File> files) {
+        if (files == null || files.isEmpty()) return;
+        boolean first = subtitleFiles.isEmpty();
+        for (File f : files) {
+            try {
+                byte[] data = readFile(f);
+                String name = f.getName();
+                byte[] srt = SubtitleConverter.toSrt(data);
+                String outName = name;
+                if (srt != null) {
+                    data = srt;
+                    int dot = outName.lastIndexOf('.');
+                    outName = (dot > 0 ? outName.substring(0, dot) : outName) + ".srt";
+                }
+                File cached = saveSubtitle(data, outName);
+                addSubtitleFile(cached, true, first);
+                first = false;
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static byte[] readFile(File f) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                if (out.size() > 16 * 1024 * 1024) throw new IOException("Subtitle file too large");
+            }
+        }
+        return out.toByteArray();
+    }
+
+    private File saveSubtitle(byte[] data, String name) throws IOException {
+        File d = new File(getCacheDir(), "subs_" + System.currentTimeMillis() + "_" + subtitleFiles.size());
+        //noinspection ResultOfMethodCallIgnored
+        d.mkdirs();
+        String safe = name.replaceAll("[^a-zA-Z0-9._-]", "_");
+        File out = new File(d, safe.isEmpty() ? "subtitle.srt" : safe);
+        try (OutputStream os = new FileOutputStream(out)) {
+            os.write(data);
+        }
+        return out;
     }
 
     // ----------------------------------------------- touch (phones / tablets used as TV boxes)
@@ -316,6 +450,7 @@ public class MainActivity extends FragmentActivity {
     protected void onStart() {
         super.onStart();
         attachViews();
+        checkForUpdate(); // a TV app is usually resumed, not relaunched, so check on every return to the screen
     }
 
     @Override
@@ -399,7 +534,7 @@ public class MainActivity extends FragmentActivity {
             final List<File> subs = new ArrayList<>(subtitleFiles);
             startMedia(url, time, wasPlaying);
             handler.postDelayed(() -> {
-                for (File f : subs) addSubtitleFile(f, false);
+                for (File f : subs) addSubtitleFile(f, false, true);
             }, 1000);
         }
     }
@@ -409,6 +544,10 @@ public class MainActivity extends FragmentActivity {
     private void onPlayerEvent(final MediaPlayer.Event event) {
         runOnUiThread(() -> {
             int t = event.type;
+            if (t == MediaPlayer.Event.EndReached && currentIsTorrent) {
+                endSession(); // playback finished: stop seeding and go back to the idle screen
+                return;
+            }
             if (t == MediaPlayer.Event.EncounteredError) {
                 if (currentUrl != null && loadAttempt == 0 && currentUrl.startsWith("http")) {
                     loadAttempt = 1; // one automatic retry with the fallback settings
@@ -447,6 +586,10 @@ public class MainActivity extends FragmentActivity {
     };
 
     private void showError() {
+        showError(null);
+    }
+
+    private void showError(String detail) {
         if (errorShown) return;
         errorShown = true;
         handler.removeCallbacks(loadTimeout);
@@ -458,8 +601,13 @@ public class MainActivity extends FragmentActivity {
         hideLoading();
         idleContainer.setVisibility(View.GONE);
         tvErrorUrl.setText(currentUrl == null ? "" : currentUrl);
-        tvErrorDetail.setVisibility(View.GONE);
-        if (currentUrl != null && currentUrl.startsWith("http")) {
+        if (detail != null && !detail.isEmpty()) {
+            tvErrorDetail.setText(detail);
+            tvErrorDetail.setVisibility(View.VISIBLE);
+        } else {
+            tvErrorDetail.setVisibility(View.GONE);
+        }
+        if (detail == null && !currentIsTorrent && currentUrl != null && currentUrl.startsWith("http")) {
             // find out why, in the background, and show it under the link
             final String failed = currentUrl;
             final String clean = failed.contains("|") ? failed.substring(0, failed.indexOf('|')) : failed;
@@ -499,6 +647,9 @@ public class MainActivity extends FragmentActivity {
     /** Stops playback, forgets the current link and returns to the ready screen. */
     private void endSession() {
         hideError();
+        if (currentIsTorrent && torrents != null) torrents.stop(); // stop seeding, keep the files
+        currentIsTorrent = false;
+        lastTorrent = null;
         handler.removeCallbacks(loadTimeout);
         try {
             if (mediaPlayer != null) mediaPlayer.stop();
@@ -517,7 +668,8 @@ public class MainActivity extends FragmentActivity {
 
     /** Background check against the GitHub releases of the repo that built this app. */
     private void checkForUpdate() {
-        if (!UpdateChecker.enabled(this) || !UpdateChecker.due(this)) return;
+        if (checkingUpdate || pendingUpdate != null || !UpdateChecker.enabled(this) || !UpdateChecker.due(this)) return;
+        checkingUpdate = true;
         new Thread(() -> {
             try {
                 final UpdateChecker.Update u = UpdateChecker.check(this);
@@ -530,7 +682,10 @@ public class MainActivity extends FragmentActivity {
                     maybeShowUpdate();
                 });
             } catch (Exception ignored) {
-                // offline or GitHub unreachable: try again next launch
+                // offline or GitHub unreachable (the TV may still be joining Wi-Fi): retry in a minute
+                handler.postDelayed(this::checkForUpdate, 60_000);
+            } finally {
+                checkingUpdate = false;
             }
         }, "update-check").start();
     }
@@ -659,10 +814,39 @@ public class MainActivity extends FragmentActivity {
     private void playMedia(String url) {
         if (updateShown && !updating) hideUpdate();
         subtitleFiles.clear();
-        currentUrl = url;
-        currentTitle = titleFromUrl(url);
         loadAttempt = 0;
-        startMedia(url, 0, true);
+        hideError();
+        String u = url == null ? "" : url.trim();
+        if (u.toLowerCase(java.util.Locale.ROOT).startsWith("magnet:")) {
+            if (torrents == null) {
+                currentUrl = u;
+                currentTitle = "Torrent";
+                showError(torrentUnavailable);
+                return;
+            }
+            // A new video load clears the old downloads, torrent or not.
+            if (currentIsTorrent) torrents.stop();
+            TorrentStreamer.clear(this);
+            currentIsTorrent = true;
+            lastTorrent = null;
+            currentUrl = u;
+            String dn = Uri.parse(u).getQueryParameter("dn");
+            currentTitle = dn == null || dn.isEmpty() ? "Torrent" : dn;
+            tvLoadingStatus.setText("Looking for peers…");
+            showLoading();
+            hideControls();
+            torrents.play(u);
+            return;
+        }
+        if (currentIsTorrent) {
+            torrents.stop();
+            TorrentStreamer.clear(this);
+            currentIsTorrent = false;
+            lastTorrent = null;
+        }
+        currentUrl = u;
+        currentTitle = titleFromUrl(u);
+        startMedia(u, 0, true);
     }
 
     private void startMedia(String url, long startMs, boolean play) {
@@ -830,11 +1014,11 @@ public class MainActivity extends FragmentActivity {
         }
     }
 
-    private void addSubtitleFile(File f, boolean remember) {
+    private void addSubtitleFile(File f, boolean remember, boolean select) {
         if (mediaPlayer == null) return;
         try {
             if (remember) subtitleFiles.add(f);
-            mediaPlayer.addSlave(Media.Slave.Type.Subtitle, Uri.fromFile(f), true);
+            mediaPlayer.addSlave(Media.Slave.Type.Subtitle, Uri.fromFile(f), select);
         } catch (Exception e) {
             Toast.makeText(this, "Subtitle error: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -880,12 +1064,18 @@ public class MainActivity extends FragmentActivity {
                     data = srt;
                     ext = ".srt";
                 }
-                final File f = new File(getCacheDir(), "sub_" + System.currentTimeMillis() + ext);
-                try (OutputStream out = new FileOutputStream(f)) {
-                    out.write(data);
+                String hint = Uri.parse(urlStr).getQueryParameter("name");
+                if (hint == null || hint.isEmpty()) {
+                    String p = Uri.parse(urlStr).getPath();
+                    hint = p == null ? "subtitle" + ext : p.substring(p.lastIndexOf('/') + 1);
                 }
+                if (!hint.toLowerCase(java.util.Locale.ROOT).endsWith(ext)) {
+                    int dot = hint.lastIndexOf('.');
+                    hint = (dot > 0 ? hint.substring(0, dot) : hint) + ext;
+                }
+                final File f = saveSubtitle(data, hint);
                 runOnUiThread(() -> {
-                    addSubtitleFile(f, true);
+                    addSubtitleFile(f, true, true);
                     Toast.makeText(this, "Subtitles loaded", Toast.LENGTH_SHORT).show();
                 });
             } catch (Exception e) {
@@ -1192,13 +1382,22 @@ public class MainActivity extends FragmentActivity {
             case "PLAY":
                 playMedia(arg.trim());
                 break;
+            case "TORRENT_FILE":
+                if (currentIsTorrent && torrents != null) {
+                    try {
+                        torrents.selectFile(Integer.parseInt(arg.trim()));
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                break;
             case "PAUSE":
                 if (mp != null && mp.isPlaying()) mp.pause();
                 break;
             case "RESUME":
                 if (errorShown && currentUrl != null) {
                     loadAttempt = 0;
-                    startMedia(currentUrl, 0, true); // retry the link that failed
+                    if (currentIsTorrent && currentUrl.startsWith("magnet:")) playMedia(currentUrl);
+                    else startMedia(currentUrl, 0, true); // retry the link that failed
                 } else if (mp != null && !mp.isPlaying()) {
                     mp.play();
                 }
@@ -1271,6 +1470,7 @@ public class MainActivity extends FragmentActivity {
         s.subBg = subBg;
         s.subBold = subBold;
         s.hdr = hdr;
+        fillTorrentStatus(s);
         if (errorShown) {
             s.state = "error";
             return s;
@@ -1302,6 +1502,19 @@ public class MainActivity extends FragmentActivity {
         return s;
     }
 
+    private void fillTorrentStatus(TvStatus s) {
+        TorrentStreamer.Snapshot ts = lastTorrent;
+        if (!currentIsTorrent || ts == null) return;
+        s.torrentState = ts.state == null ? "" : ts.state;
+        s.torrentTitle = ts.title == null ? "" : ts.title;
+        s.torrentSelected = ts.selected;
+        s.torrentPeers = ts.peers;
+        s.torrentRate = ts.rate;
+        s.torrentProgress = ts.progress;
+        s.torrentError = ts.error == null ? "" : ts.error;
+        if (ts.files != null) s.torrentFiles.addAll(ts.files);
+    }
+
     private static void fillTracks(List<TvStatus.Track> out, MediaPlayer.TrackDescription[] tracks) {
         if (tracks == null) return;
         for (int i = 0; i < tracks.length && i < 24; i++) {
@@ -1314,6 +1527,10 @@ public class MainActivity extends FragmentActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (torrents != null) {
+            torrents.setListener(null);
+            torrents.stop();
+        }
         if (hlsProxy != null) hlsProxy.stop();
         serverRunning = false;
         handler.removeCallbacksAndMessages(null);

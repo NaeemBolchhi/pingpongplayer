@@ -103,6 +103,22 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     private final List<Integer> spuIds = new ArrayList<>();
     private String audioSig = "", spuSig = "";
 
+    // torrent playlist (the TV owns the files, this screen only picks one)
+    private String torrentTitleSeen = "";
+    private boolean torrentPromptShown = false;
+
+    private static final class Row {
+        final String name;
+        final int subs;
+        final int index;
+
+        Row(String name, int subs, int index) {
+            this.name = name;
+            this.subs = subs;
+            this.index = index;
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -209,6 +225,10 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         toolbar.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == R.id.action_rename) {
                 showRenameDialog();
+                return true;
+            }
+            if (item.getItemId() == R.id.action_playlist) {
+                showPlaylist();
                 return true;
             }
             return false;
@@ -458,7 +478,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         }, "sub-check").start();
     }
 
-    /** Reads the clipboard (only ever called from a tap) and pulls an http(s) link out of it. */
+    /** Reads the clipboard (only ever called from a tap) and pulls a magnet or an http(s) link out of it. */
     private String clipboardUrl() {
         try {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -467,11 +487,111 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             if (d == null || d.getItemCount() == 0) return null;
             CharSequence t = d.getItemAt(0).coerceToText(this);
             if (t == null) return null;
+            Matcher mag = Pattern.compile("magnet:\\?[^\\s<>\"']+").matcher(t);
+            if (mag.find()) return mag.group();
             Matcher m = Pattern.compile("https?://\\S+").matcher(t);
             return m.find() ? m.group() : null;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String torrentLabel(TvStatus s) {
+        String st = s.torrentState;
+        if (st == null || st.isEmpty()) return "";
+        StringBuilder b = new StringBuilder("Torrent · ");
+        switch (st) {
+            case "metadata":
+                b.append("finding files");
+                break;
+            case "choosing":
+                b.append("choose a video below");
+                break;
+            case "buffering":
+                b.append("buffering ").append(s.torrentProgress).append('%');
+                break;
+            case "streaming":
+                b.append(s.torrentProgress).append('%');
+                break;
+            case "error":
+                b.append(s.torrentError == null || s.torrentError.isEmpty() ? "error" : s.torrentError);
+                break;
+            default:
+                b.append(st);
+                break;
+        }
+        if (s.torrentPeers > 0) b.append(" · ").append(s.torrentPeers).append(" peers");
+        if (s.torrentRate > 0) b.append(" · ").append(s.torrentRate / 1024).append(" KB/s");
+        return b.toString();
+    }
+
+    private void maybeShowTorrentPlaylist(TvStatus s) {
+        String title = s.torrentTitle == null ? "" : s.torrentTitle;
+        if (!title.equals(torrentTitleSeen)) {
+            torrentTitleSeen = title;
+            torrentPromptShown = false;
+        }
+        if (torrentPromptShown || title.isEmpty()) return;
+        if (!"choosing".equals(s.torrentState)) return;
+        if (torrentRows(s).size() <= 1) return;
+        torrentPromptShown = true;
+        showPlaylist();
+    }
+
+    private List<Row> torrentRows(TvStatus s) {
+        List<Row> rows = new ArrayList<>();
+        if (s.torrentFiles == null) return rows;
+        for (TvStatus.TorrentFile f : s.torrentFiles) {
+            if (f.name != null && MediaFiles.isVideo(f.name)) {
+                rows.add(new Row(f.name, f.subtitles, f.index));
+            }
+        }
+        return rows;
+    }
+
+    /** Shows the local share's playlist, or the torrent's video list sent by the TV. */
+    private void showPlaylist() {
+        final List<Row> rows = new ArrayList<>();
+        final boolean torrentMode;
+        int current = -1;
+        List<CastService.Entry> local = CastService.playlist();
+        if (local != null && !local.isEmpty()) {
+            torrentMode = false;
+            current = CastService.currentIndex();
+            for (int i = 0; i < local.size(); i++) {
+                CastService.Entry e = local.get(i);
+                rows.add(new Row(e.name, e.subtitles, i));
+            }
+        } else {
+            torrentMode = true;
+            current = last.torrentSelected;
+            rows.addAll(torrentRows(last));
+        }
+        if (rows.isEmpty()) {
+            snack("No playlist for this video");
+            return;
+        }
+        CharSequence[] items = new CharSequence[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            Row r = rows.get(i);
+            String mark = r.index == current ? "▶ " : "";
+            String subs = r.subs == 0 ? "" : "  ·  " + r.subs + " sub" + (r.subs == 1 ? "" : "s");
+            items[i] = mark + (i + 1) + ". " + r.name + subs;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(torrentMode ? "Torrent videos" : "Playlist")
+                .setItems(items, (dialog, which) -> {
+                    Row r = rows.get(which);
+                    if (torrentMode) {
+                        send("TORRENT_FILE:" + r.index);
+                        snack("Loading " + r.name);
+                    } else {
+                        CastService.select(r.index);
+                        snack("Playing " + r.name);
+                    }
+                })
+                .setNegativeButton("Close", null)
+                .show();
     }
 
     private void showRenameDialog() {
@@ -563,6 +683,9 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         if (toolbar.getMenu().findItem(R.id.action_rename) != null) {
             toolbar.getMenu().findItem(R.id.action_rename).setEnabled(enabled);
         }
+        if (toolbar.getMenu().findItem(R.id.action_playlist) != null) {
+            toolbar.getMenu().findItem(R.id.action_playlist).setEnabled(enabled);
+        }
         for (int i = 0; i < results.getChildCount(); i++) {
             View row = results.getChildAt(i);
             View send = row.findViewById(R.id.send);
@@ -611,6 +734,12 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
             tvState.setTextColor(color(R.color.on_surface_variant));
             tvState.setText(stateLabel(state, s.rate));
         }
+        String torrent = torrentLabel(s);
+        if (!torrent.isEmpty()) {
+            tvState.setTextColor(color(R.color.on_surface_variant));
+            tvState.setText(torrent);
+        }
+        maybeShowTorrentPlaylist(s);
         btnPlay.setIcon(ContextCompat.getDrawable(this, playing ? R.drawable.ic_pause : R.drawable.ic_play));
 
         seek.setEnabled(connected && s.length > 0 && s.seekable);
@@ -774,7 +903,9 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
         new Thread(() -> {
             try {
                 final SubtitleApi.Fetched f = SubtitleApi.download(r.id, r.season, r.episode);
-                final String link = SubtitleServer.serve(f.data, f.ext, device.host, device.port);
+                String label = r.title == null || r.title.isEmpty() ? "subtitle" : r.title;
+                if (r.language != null && !r.language.isEmpty()) label = label + "." + r.language;
+                final String link = SubtitleServer.serve(f.data, f.ext, device.host, device.port, label);
                 runOnUiThread(() -> {
                     send("SUB_URL:" + link);
                     snack("Subtitle sent to TV");
