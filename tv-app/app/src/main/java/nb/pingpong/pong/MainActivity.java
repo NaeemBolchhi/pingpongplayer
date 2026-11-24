@@ -132,6 +132,7 @@ public class MainActivity extends FragmentActivity {
         setContentView(R.layout.activity_main);
 
         prefs = getSharedPreferences("PongPrefs", Context.MODE_PRIVATE);
+        installCrashRecorder();
         subSize = prefs.getInt("sub_size", 100);
         subColor = prefs.getInt("sub_color", 0xFFFFFF);
         subOutline = prefs.getInt("sub_outline", 4);
@@ -220,6 +221,32 @@ public class MainActivity extends FragmentActivity {
         handler.postDelayed(updateUiRunnable, 500);
         registerService();
         startUdpServer();
+        showLastCrash();
+    }
+
+    /** Remembers why the app crashed (Java exceptions only), so the next start can show it. */
+    private void installCrashRecorder() {
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        final SharedPreferences p = prefs;
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            try {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                error.printStackTrace(new java.io.PrintWriter(sw));
+                String trace = sw.toString();
+                if (trace.length() > 1500) trace = trace.substring(0, 1500);
+                p.edit().putString("last_crash", "Thread " + thread.getName() + ": " + trace).commit();
+            } catch (Throwable ignored) {
+            }
+            if (previous != null) previous.uncaughtException(thread, error);
+        });
+    }
+
+    private void showLastCrash() {
+        String crash = prefs.getString("last_crash", null);
+        if (crash == null) return;
+        prefs.edit().remove("last_crash").apply();
+        showError(crash);
+        tvErrorUrl.setText("Pong! closed unexpectedly last time. The details below help find the cause.");
     }
 
     // --------------------------------------------------------------- torrent playback
@@ -899,12 +926,8 @@ public class MainActivity extends FragmentActivity {
             torrentMagnet = u;
             lastTorrent = null;
             currentUrl = u;
-            String dn = null;
-            try {
-                dn = Uri.parse(u).getQueryParameter("dn");
-            } catch (Exception ignored) {
-            }
-            currentTitle = dn == null || dn.isEmpty() ? "Torrent" : dn;
+            String dn = TorrentFiles.magnetParam(u, "dn"); // Uri can't read magnet parameters
+            currentTitle = dn == null || dn.trim().isEmpty() ? "Torrent" : dn.trim();
             tvLoadingStatus.setText("Loading torrent…");
             idleContainer.setVisibility(View.GONE);
             showLoading();

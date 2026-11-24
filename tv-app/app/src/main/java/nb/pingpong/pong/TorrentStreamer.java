@@ -12,6 +12,7 @@ import org.libtorrent4j.Priority;
 import org.libtorrent4j.SessionManager;
 import org.libtorrent4j.SessionParams;
 import org.libtorrent4j.SettingsPack;
+import org.libtorrent4j.Sha1Hash;
 import org.libtorrent4j.TorrentFlags;
 import org.libtorrent4j.TorrentHandle;
 import org.libtorrent4j.TorrentInfo;
@@ -151,9 +152,13 @@ public final class TorrentStreamer {
     /** Stops the session and deletes every downloaded file; serialised with {@link #play(String)}. */
     public static void clear(final Context context) {
         CTRL.execute(() -> {
-            TorrentStreamer s = instance;
-            if (s != null) s.stopNow();
-            deleteRecursive(downloadDir(context.getApplicationContext()));
+            try {
+                TorrentStreamer s = instance;
+                if (s != null) s.stopNow();
+                deleteRecursive(downloadDir(context.getApplicationContext()));
+            } catch (Throwable ignored) {
+                // never take the app down over a cleanup
+            }
         });
     }
 
@@ -167,7 +172,9 @@ public final class TorrentStreamer {
     private volatile boolean bufferPending;
     private volatile String lastError = "";
     private volatile SessionManager session;
+    /** Our own handle, from SessionManager.find() (never one taken from an alert). */
     private volatile TorrentHandle handle;
+    private volatile Sha1Hash infoHash;
     private volatile TorrentInfo info;
     private volatile File dir;
     private volatile String magnetUri = "";
@@ -225,20 +232,16 @@ public final class TorrentStreamer {
             try {
                 switch (alert.type()) {
                     case ADD_TORRENT: {
+                        // Used only right here: an alert's handle points into the alert itself, which libtorrent
+                        // frees on its next poll. Keeping it crashed the app. The pump gets its own handle.
                         TorrentHandle h = ((AddTorrentAlert) alert).handle();
-                        if (h != null && h.isValid()) {
-                            handle = h; // lets the pump report peers and speed while metadata is still loading
-                            h.resume();
-                        } else {
-                            failLater("Couldn't add the torrent");
-                        }
+                        if (h != null && h.isValid()) h.resume();
+                        else failLater("Couldn't add the torrent");
                         break;
                     }
-                    case METADATA_RECEIVED: {
-                        final TorrentHandle h = ((MetadataReceivedAlert) alert).handle();
-                        CTRL.execute(() -> onMetadata(h));
+                    case METADATA_RECEIVED:
+                        onCtrl(TorrentStreamer.this::onMetadata);
                         break;
-                    }
                     case TORRENT_ERROR: {
                         TorrentErrorAlert e = (TorrentErrorAlert) alert;
                         String m = e.error() == null ? null : e.error().getMessage();
@@ -260,7 +263,18 @@ public final class TorrentStreamer {
     };
 
     private void failLater(final String message) {
-        CTRL.execute(() -> fail(message));
+        onCtrl(() -> fail(message));
+    }
+
+    /** Runs on CTRL; an exception there would kill the app, so it becomes a torrent error instead. */
+    private void onCtrl(final Runnable task) {
+        CTRL.execute(() -> {
+            try {
+                task.run();
+            } catch (Throwable t) {
+                fail("Torrent error: " + (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage()));
+            }
+        });
     }
 
     private TorrentStreamer(Context app) {
@@ -276,7 +290,7 @@ public final class TorrentStreamer {
 
     /** Starts a magnet download. Returns immediately; progress arrives through the listener. */
     public void play(final String magnet) {
-        CTRL.execute(() -> {
+        CTRL.execute(() -> { // setup has its own catch-all
             try {
                 setup(magnet);
             } catch (Throwable t) {
@@ -298,12 +312,11 @@ public final class TorrentStreamer {
         lastError = "";
         selected = -1;
         currentUrl = null;
-        try {
-            String dn = Uri.parse(magnet).getQueryParameter("dn");
-            currentTitle = dn == null || dn.isEmpty() ? "Torrent" : dn;
-        } catch (Exception e) {
-            currentTitle = "Torrent";
-        }
+        String dn = TorrentFiles.magnetParam(magnet, "dn");
+        currentTitle = dn == null || dn.trim().isEmpty() ? "Torrent" : dn.trim();
+        String hex = TorrentFiles.infoHashHex(magnet);
+        if (hex == null) throw new IllegalArgumentException("This magnet link has no BitTorrent info hash");
+        infoHash = new Sha1Hash(hex);
         videoFiles.clear();
         videoIndices.clear();
         subsByVideo.clear();
@@ -343,12 +356,12 @@ public final class TorrentStreamer {
     }
 
     /** Runs on CTRL. */
-    private void onMetadata(TorrentHandle h) {
+    private void onMetadata() {
+        TorrentHandle h = ensureHandle();
         if (metadataReady || !running || h == null || !h.isValid()) return;
         TorrentInfo ti = h.torrentFile();
         if (ti == null || !ti.isValid()) return;
         metadataReady = true;
-        handle = h;
         info = ti;
         lastPeerAt = System.currentTimeMillis();
         // No space check here: only the video that gets picked has to fit (see applyFile), so one
@@ -397,8 +410,8 @@ public final class TorrentStreamer {
 
         int pick = -1;
         try {
-            String so = Uri.parse(magnetUri).getQueryParameter("so");
-            if (so != null && !so.isEmpty()) pick = Integer.parseInt(so.split(",")[0].trim());
+            String so = TorrentFiles.magnetParam(magnetUri, "so");
+            if (so != null && !so.isEmpty()) pick = Integer.parseInt(so.split("[,-]")[0].trim());
         } catch (Exception ignored) {
         }
         if (pick >= 0 && !names.containsKey(pick)) pick = -1;
@@ -412,9 +425,24 @@ public final class TorrentStreamer {
         }
     }
 
+    /** Looks up a durable handle for our torrent once the session has added it. */
+    private TorrentHandle ensureHandle() {
+        TorrentHandle h = handle;
+        if (h != null) return h;
+        SessionManager sm = session;
+        Sha1Hash ih = infoHash;
+        if (sm == null || ih == null || !running) return null;
+        TorrentHandle found = sm.find(ih);
+        if (found != null && found.isValid()) {
+            handle = found;
+            return found;
+        }
+        return null;
+    }
+
     /** Selects a video from the playlist (libtorrent file index). */
     public void selectFile(final int index) {
-        CTRL.execute(() -> {
+        onCtrl(() -> {
             if (running && metadataReady) applyFile(index);
         });
     }
@@ -584,7 +612,7 @@ public final class TorrentStreamer {
                     failLater("No peers or metadata after 90 seconds");
                     break;
                 }
-                TorrentHandle h = handle;
+                TorrentHandle h = ensureHandle();
                 if (h != null && h.isValid()) {
                     TorrentStatus st = h.status();
                     peers = st.numPeers();
@@ -600,10 +628,7 @@ public final class TorrentStreamer {
                         // Fallback in case the metadata alert was missed (e.g. a full alert queue).
                         lastMetaCheck = now;
                         TorrentInfo ti = h.torrentFile();
-                        if (ti != null && ti.isValid()) {
-                            final TorrentHandle mh = h;
-                            CTRL.execute(() -> onMetadata(mh));
-                        }
+                        if (ti != null && ti.isValid()) onCtrl(this::onMetadata);
                     }
                     // Only while waiting for a choice: once a video streams, a quiet swarm must not kill
                     // playback (the file may already be complete, or the viewer may simply be paused).
@@ -621,7 +646,7 @@ public final class TorrentStreamer {
                         if (biggest == null) choicePending = false;
                         else {
                             final int pick = biggest.index;
-                            CTRL.execute(() -> {
+                            onCtrl(() -> {
                                 if (running && selected < 0) applyFile(pick);
                             });
                         }
@@ -782,6 +807,7 @@ public final class TorrentStreamer {
         final SessionManager sm = session;
         CTRL.execute(() -> {
             if (session != sm) return; // a newer torrent already replaced it (stopNow handled this one)
+            joinPump();
             stopSession();
             session = null;
             handle = null;
@@ -791,21 +817,26 @@ public final class TorrentStreamer {
 
     /** Stops everything but keeps the downloaded files. Serialised through CTRL when called publicly. */
     public void stop() {
-        CTRL.execute(this::stopNow);
+        CTRL.execute(() -> {
+            try {
+                stopNow();
+            } catch (Throwable ignored) {
+            }
+        });
     }
 
     private void stopNow() {
         running = false;
         choicePending = false;
         bufferPending = false;
-        if (pump != null) pump.interrupt();
-        pump = null;
+        joinPump();
         if (server != null) server.stop();
         server = null;
         closeChannel();
         stopSession();
         session = null;
         handle = null;
+        infoHash = null;
         info = null;
         currentUrl = null;
         currentTitle = "";
@@ -814,6 +845,18 @@ public final class TorrentStreamer {
         progress = 0;
         peers = 0;
         rate = 0;
+    }
+
+    /** Waits for the pump to leave any native call, so the session is never deleted under it. */
+    private void joinPump() {
+        Thread p = pump;
+        pump = null;
+        if (p == null || p == Thread.currentThread()) return;
+        p.interrupt();
+        try {
+            p.join(3000);
+        } catch (InterruptedException ignored) {
+        }
     }
 
     private void stopSession() {
@@ -984,6 +1027,11 @@ public final class TorrentStreamer {
                 open.clear();
             }
             pool.shutdownNow();
+            try {
+                // let stream threads leave libtorrent calls before the caller tears the session down
+                pool.awaitTermination(1500, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ignored) {
+            }
         }
 
         private void serve(Socket s) {

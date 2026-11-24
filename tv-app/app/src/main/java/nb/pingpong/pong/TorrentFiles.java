@@ -92,6 +92,60 @@ final class TorrentFiles {
         return "";
     }
 
+    /**
+     * A parameter of a magnet link, URL-decoded; null if absent. Android's Uri can't do this: "magnet:?..." is
+     * an opaque URI, and getQueryParameter() throws for those.
+     */
+    static String magnetParam(String magnet, String key) {
+        if (magnet == null) return null;
+        int q = magnet.indexOf('?');
+        if (q < 0) return null;
+        for (String kv : magnet.substring(q + 1).split("&")) {
+            int eq = kv.indexOf('=');
+            String k = eq < 0 ? kv : kv.substring(0, eq);
+            if (!k.equalsIgnoreCase(key)) continue;
+            String v = eq < 0 ? "" : kv.substring(eq + 1);
+            try {
+                return java.net.URLDecoder.decode(v, "UTF-8"); // "+" is a space, as in form encoding
+            } catch (Exception e) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    /** The BitTorrent v1 info hash of a magnet link as 40 lowercase hex digits (hex or base32 form); else null. */
+    static String infoHashHex(String magnet) {
+        if (magnet == null) return null;
+        String m = magnet.toLowerCase(Locale.ROOT);
+        int i = m.indexOf("urn:btih:");
+        if (i < 0) return null;
+        int s = i + 9, e = s;
+        while (e < m.length() && m.charAt(e) != '&') e++;
+        String v = m.substring(s, e).trim();
+        if (v.length() == 40 && v.matches("[0-9a-f]{40}")) return v;
+        if (v.length() == 32) {
+            String alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+            byte[] out = new byte[20];
+            long buffer = 0;
+            int bits = 0, n = 0;
+            for (int k = 0; k < 32; k++) {
+                int val = alphabet.indexOf(v.charAt(k));
+                if (val < 0) return null;
+                buffer = (buffer << 5) | val;
+                bits += 5;
+                if (bits >= 8) {
+                    bits -= 8;
+                    out[n++] = (byte) (buffer >> bits);
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            for (byte b : out) sb.append(String.format(Locale.ROOT, "%02x", b & 0xff));
+            return sb.toString();
+        }
+        return null;
+    }
+
     static boolean matches(String video, String sub) {
         String v = norm(video);
         String s = withoutTags(sub);
