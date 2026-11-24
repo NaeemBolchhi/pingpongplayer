@@ -198,6 +198,7 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/clock_box"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="top|end"
@@ -372,6 +373,20 @@
                     android:tint="@color/tv_icon_tint" />
 
                 <ImageButton
+                    android:id="@+id/btn_audio"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/btn_icon_bg"
+                    android:contentDescription="Audio"
+                    android:focusable="true"
+                    android:nextFocusUp="@id/seek_bar"
+                    android:padding="11dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_audio"
+                    android:tint="@color/tv_icon_tint" />
+
+                <ImageButton
                     android:id="@+id/btn_subtitles"
                     android:layout_width="56dp"
                     android:layout_height="56dp"
@@ -519,7 +534,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:singleLine="true"
-                android:textColor="#F5F5F5"
+                android:textColor="#7ED996"
                 android:textSize="14sp"
                 android:textStyle="bold" />
         </LinearLayout>

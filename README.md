@@ -57,13 +57,15 @@ Controls are disabled while the TV is unreachable.
 - Ready, loading and error screens in black with a warm glow, which say what went wrong when a link won't load
 - Player menu:
   - top: back arrow, title, a status line (such as torrent progress and peers) with the time the video ends, and the clock
-  - bottom: a seek bar that also shows how much of a torrent video has downloaded, elapsed and remaining time, then play/pause, −10 s, +10 s, speed, **Playlist** and **Subtitles**
+  - bottom: a seek bar that also shows how much of a torrent video has downloaded, elapsed and remaining time, then play/pause, −10 s, +10 s, speed, **Playlist**, **Audio** and **Subtitles**
 - The speed button cycles 1x → 1.25x → 1.5x → 1.75x → 2x → 1x. Any other speed (set from the phone) goes back to 1x.
 - The **Playlist** panel lists the videos of the current torrent or phone share. The button is hidden when there's only one video.
+- The **Audio** panel lists the video's audio tracks, with the playing one checked.
 - The **Subtitles** panel lists Off and every subtitle track, labelled with where it came from (the torrent, sent from Ping!, or the video file). The Menu key on the remote opens it too.
 - Full remote support: left/right seeks 10 s without opening the menu, with on-screen feedback. On the seek bar, left/right seeks 30 s. Back closes a panel or the menu. On the player, Back asks before ending the session.
 - Subtitles in ASS/SSA, WebVTT and TTML format are converted to SRT before they are shown (SRT and other formats are used as they are)
 - If the app closed unexpectedly, the next start shows why
+- Runs full screen on phones and tablets too, with the picture extending into the camera cutout and the menu kept clear of it
 - Also works with touch: tap for the menu, double-tap the sides to seek, double-tap the middle to play/pause
 
 ## How it works
@@ -87,7 +89,7 @@ Subtitle search runs on the phone. When you pick a result, the phone downloads a
 
 Both apps are standard Gradle/Android projects (`phone-app/` and `tv-app/`) built with JDK 17, Gradle 8.7 and Android Gradle Plugin 8.5.2. The phone app downloads one library from JitPack (`https://jitpack.io`), which is set up in `phone-app/build.gradle`.
 
-The **Build APKs** GitHub Actions workflow builds both apps. It only runs when you start it manually (Actions tab → Build APKs → Run workflow) and produces two zips, `Ping-Phone-v<version>` and `Pong-TV-v<version>`. Each contains one APK per ABI plus a universal APK, named like `Pong-TV-v1.2.0-arm64-v8a.apk`.
+The **Build APKs** GitHub Actions workflow builds both apps. It only runs when you start it manually (Actions tab → Build APKs → Run workflow) and produces two zips, `Ping-Phone-v<version>` and `Pong-TV-v<version>`. Each contains one APK per ABI plus a universal APK, named like `Pong-TV-v1.2.1-arm64-v8a.apk`.
 
 ### Subtitle search keys
 
@@ -117,7 +119,7 @@ Otherwise the workflow generates a throwaway test key. Test-signed builds work f
 - Subtitle search uses the [SubSource](https://subsource.net) API. It is subject to SubSource's [terms](https://subsource.net/terms) and rate limits, so if search is busy, try again in a while.
 - Torrent playback shares the downloaded pieces with other peers while the torrent is loaded, as BitTorrent does. Only play torrents you have the right to download and share.
 - Both apps check for updates in the background (at most every 12 hours) against the latest GitHub release of the repository that built them, so forks look at their own releases. **Check for updates** in Ping!'s menu checks right away on the phone and the connected TV, even if you chose Never show again. The TV shows the update prompt on the ready screen or after a video ends, never over a video that is playing.
-- To publish an update, tag a release like `v1.2.0` and attach the APKs that the workflow produces (`Pong-TV-v1.2.0-arm64-v8a.apk`, `Ping-Phone-v1.2.0-universal.apk` and so on, or a zip of them). The app picks the file that matches the device's CPU, downloads it and opens Android's installer. The prompt offers Update, Not now and Never show again. Local builds (no `GITHUB_REPOSITORY`) don't check.
+- To publish an update, tag a release like `v1.2.1` and attach the APKs that the workflow produces (`Pong-TV-v1.2.1-arm64-v8a.apk`, `Ping-Phone-v1.2.1-universal.apk` and so on, or a zip of them). The app picks the file that matches the device's CPU, downloads it and opens Android's installer. The prompt offers Update, Not now and Never show again. Local builds (no `GITHUB_REPOSITORY`) don't check.
 - Playback is powered by LibVLC (see License below).
 
 ## License

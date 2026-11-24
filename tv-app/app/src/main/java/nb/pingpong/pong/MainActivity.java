@@ -78,13 +78,13 @@ public class MainActivity extends FragmentActivity {
     private SeekBar seekBar;
     private TextView tvTimeCur, tvTimeTotal, tvIdleChip, tvTitle, tvLoadingTitle, tvLoadingStatus;
     private View idleContainer, loadingOverlay, confirmOverlay, topBar, bottomBar, seekGlowLeft, seekGlowRight;
-    private ImageButton btnPlayPause, btnBackNav, btnBack10, btnFwd10, btnPlaylist, btnSubtitles;
+    private ImageButton btnPlayPause, btnBackNav, btnBack10, btnFwd10, btnPlaylist, btnAudio, btnSubtitles;
     private Button btnSpeed;
     private TextView tvStatusLine, tvEndsAt;
     private View statusDot;
 
     // side panel (playlist / subtitles)
-    private static final int PANEL_NONE = 0, PANEL_PLAYLIST = 1, PANEL_SUBS = 2;
+    private static final int PANEL_NONE = 0, PANEL_PLAYLIST = 1, PANEL_SUBS = 2, PANEL_AUDIO = 3;
     private int panelKind = PANEL_NONE;
     private View panelOverlay, panelOpener;
     private TextView panelTitle, panelSubtitle;
@@ -206,6 +206,7 @@ public class MainActivity extends FragmentActivity {
         btnPlayPause = findViewById(R.id.btn_play_pause);
         btnSpeed = findViewById(R.id.btn_speed);
         btnPlaylist = findViewById(R.id.btn_playlist);
+        btnAudio = findViewById(R.id.btn_audio);
         btnSubtitles = findViewById(R.id.btn_subtitles);
         tvStatusLine = findViewById(R.id.tv_status_line);
         tvEndsAt = findViewById(R.id.tv_ends_at);
@@ -227,11 +228,8 @@ public class MainActivity extends FragmentActivity {
             seekBar.setSecondaryProgress(sp);
         });
 
-        if (Build.VERSION.SDK_INT >= 28) {
-            WindowManager.LayoutParams lp = getWindow().getAttributes();
-            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            getWindow().setAttributes(lp);
-        }
+        goFullscreen();
+        keepControlsClearOfCutout();
         setupTouch();
         seekLeft = findViewById(R.id.seek_left);
         seekRight = findViewById(R.id.seek_right);
@@ -266,6 +264,7 @@ public class MainActivity extends FragmentActivity {
             showControls();
         });
         btnPlaylist.setOnClickListener(v -> openPanel(PANEL_PLAYLIST));
+        btnAudio.setOnClickListener(v -> openPanel(PANEL_AUDIO));
         btnSubtitles.setOnClickListener(v -> openPanel(PANEL_SUBS));
         btnConfirmKeep.setOnClickListener(v -> dismissConfirm());
         btnConfirmStop.setOnClickListener(v -> {
@@ -491,12 +490,58 @@ public class MainActivity extends FragmentActivity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        if (hasFocus) goFullscreen(); // the bars come back after dialogs, the recents screen and the like
+    }
+
+    /**
+     * True full screen: the window covers the whole display, including the camera cutout on phones (the theme
+     * asks for that too), and the status and navigation bars stay hidden until swiped in.
+     */
+    private void goFullscreen() {
+        android.view.Window w = getWindow();
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams lp = w.getAttributes();
+            int mode = Build.VERSION.SDK_INT >= 30 ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            if (lp.layoutInDisplayCutoutMode != mode) {
+                lp.layoutInDisplayCutoutMode = mode;
+                w.setAttributes(lp);
+            }
         }
+        w.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(w, false);
+        androidx.core.view.WindowInsetsControllerCompat c =
+                androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView());
+        c.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+        c.setSystemBarsBehavior(
+                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
+    /** The picture fills the cutout area, but the menu and the side panel keep their buttons and text out of it. */
+    private void keepControlsClearOfCutout() {
+        final View panel = findViewById(R.id.panel);
+        final int pl = panel.getPaddingLeft(), pt = panel.getPaddingTop(), pr = panel.getPaddingRight(),
+                pb = panel.getPaddingBottom();
+        final View clock = findViewById(R.id.clock_box);
+        // padding on the bars themselves, so the shading behind them still reaches the screen edges
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(controlsOverlay, (v, insets) -> {
+            androidx.core.graphics.Insets cut = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout());
+            topBar.setPadding(cut.left, cut.top, 0, 0);
+            clock.setPadding(0, cut.top, cut.right, 0);
+            bottomBar.setPadding(cut.left, 0, cut.right, cut.bottom);
+            return insets;
+        });
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(panelOverlay, (v, insets) -> {
+            androidx.core.graphics.Insets cut = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout());
+            panel.setPadding(pl, pt + cut.top, pr + cut.right, pb + cut.bottom);
+            return insets;
+        });
     }
 
     /** True when a touch belongs to a dialog or to the menu's top/bottom bars rather than the video. */
@@ -1423,11 +1468,11 @@ public class MainActivity extends FragmentActivity {
         boolean many = playlistRows().size() > 1;
         int vis = many ? View.VISIBLE : View.GONE;
         if (btnPlaylist.getVisibility() != vis) {
-            if (!many && btnPlaylist.hasFocus()) btnSubtitles.requestFocus();
+            if (!many && btnPlaylist.hasFocus()) btnAudio.requestFocus();
             btnPlaylist.setVisibility(vis);
-            // the gap before Subtitles belongs to Playlist only when it's shown
-            ((LinearLayout.LayoutParams) btnSubtitles.getLayoutParams()).setMarginStart(many ? dp(4) : 0);
-            btnSubtitles.requestLayout();
+            // the gap before Audio belongs to Playlist only when it's shown
+            ((LinearLayout.LayoutParams) btnAudio.getLayoutParams()).setMarginStart(many ? dp(4) : 0);
+            btnAudio.requestLayout();
         }
     }
 
@@ -1540,9 +1585,39 @@ public class MainActivity extends FragmentActivity {
         return rows;
     }
 
-    private void selectSubtitle(int id) {
+    /** Every audio track (VLC's "Disable" entry left out), the playing one checked. */
+    private List<PanelRow> audioRows() {
+        List<PanelRow> rows = new ArrayList<>();
+        final MediaPlayer mp = mediaPlayer;
+        if (mp == null) return rows;
+        MediaPlayer.TrackDescription[] tracks;
+        int current;
         try {
-            if (mediaPlayer != null) mediaPlayer.setSpuTrack(id);
+            tracks = mp.getAudioTracks();
+            current = mp.getAudioTrack();
+        } catch (Exception e) {
+            return rows;
+        }
+        if (tracks == null) return rows;
+        for (MediaPlayer.TrackDescription t : tracks) {
+            final int id = t.id;
+            if (id == -1) continue;
+            String name = t.name == null || t.name.trim().isEmpty() ? "Track " + id : t.name.trim();
+            rows.add(new PanelRow(name, "", id == current, 0, () -> selectTrack(true, id)));
+        }
+        return rows;
+    }
+
+    private void selectSubtitle(int id) {
+        selectTrack(false, id);
+    }
+
+    private void selectTrack(boolean audio, int id) {
+        try {
+            if (mediaPlayer != null) {
+                if (audio) mediaPlayer.setAudioTrack(id);
+                else mediaPlayer.setSpuTrack(id);
+            }
         } catch (Exception ignored) {
         }
         // move the check, keep the focus on the row that was picked
@@ -1641,6 +1716,11 @@ public class MainActivity extends FragmentActivity {
             panelTitle.setText("Playlist");
             panelSubtitle.setText(currentIsTorrent ? "Videos in this torrent" : "Videos in this share");
             rows = playlistRows();
+        } else if (panelKind == PANEL_AUDIO) {
+            panelTitle.setText("Audio");
+            panelSubtitle.setText("Choose an audio track");
+            rows = audioRows();
+            if (rows.isEmpty()) panelSubtitle.setText("This video has no audio tracks to choose from");
         } else {
             panelTitle.setText("Subtitles");
             panelSubtitle.setText("Choose a subtitle track");
@@ -1808,7 +1888,7 @@ public class MainActivity extends FragmentActivity {
         View focus = getCurrentFocus();
         boolean onButton = controlsVisible && focus != null && (focus == btnPlayPause
                 || focus == btnBackNav || focus == btnBack10 || focus == btnFwd10 || focus == seekBar
-                || focus == btnSpeed || focus == btnPlaylist || focus == btnSubtitles);
+                || focus == btnSpeed || focus == btnPlaylist || focus == btnAudio || focus == btnSubtitles);
 
         if (panelKind != PANEL_NONE) {
             if (keyCode == KeyEvent.KEYCODE_BACK) {

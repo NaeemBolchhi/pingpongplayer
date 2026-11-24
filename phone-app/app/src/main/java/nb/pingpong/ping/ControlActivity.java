@@ -70,7 +70,7 @@ public class ControlActivity extends AppCompatActivity implements TvClient.Liste
     private static final float DISABLED_ALPHA = 0.38f;
 
     private static final String[] TAB_NAMES = {"Controls", "Playback", "Subtitles", "Playlist"};
-    private static final int[] TAB_ICONS = {R.drawable.ic_tab_controls, R.drawable.ic_tab_playback,
+    private static final int[] TAB_ICONS = {R.drawable.ic_tab_controls, R.drawable.ic_tab_video,
             R.drawable.ic_tab_subtitles, R.drawable.ic_tab_playlist};
     private static final int TAB_PLAYLIST = 3;
     /** Where the Playlist tab's rows come from. */
