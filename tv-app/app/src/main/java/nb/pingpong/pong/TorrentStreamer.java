@@ -235,8 +235,12 @@ public final class TorrentStreamer {
                         // Used only right here: an alert's handle points into the alert itself, which libtorrent
                         // frees on its next poll. Keeping it crashed the app. The pump gets its own handle.
                         TorrentHandle h = ((AddTorrentAlert) alert).handle();
-                        if (h != null && h.isValid()) h.resume();
-                        else failLater("Couldn't add the torrent");
+                        if (h != null && h.isValid()) {
+                            if (infoHash == null) infoHash = HashCompat.of(h); // a copy, safe to keep
+                            h.resume();
+                        } else {
+                            failLater("Couldn't add the torrent");
+                        }
                         break;
                     }
                     case METADATA_RECEIVED:
@@ -316,7 +320,7 @@ public final class TorrentStreamer {
         currentTitle = dn == null || dn.trim().isEmpty() ? "Torrent" : dn.trim();
         String hex = TorrentFiles.infoHashHex(magnet);
         if (hex == null) throw new IllegalArgumentException("This magnet link has no BitTorrent info hash");
-        infoHash = new Sha1Hash(hex);
+        infoHash = HashCompat.fromHex(hex); // may be null; then the ADD_TORRENT alert supplies it
         videoFiles.clear();
         videoIndices.clear();
         subsByVideo.clear();
@@ -605,9 +609,15 @@ public final class TorrentStreamer {
 
     private void pump() {
         long lastPublish = 0;
+        final long started = System.currentTimeMillis();
         while (running) {
             try {
                 long now = System.currentTimeMillis();
+                if (handle == null && infoHash == null && now - started > 15_000) {
+                    // the torrent was added but none of the known libtorrent4j calls could identify it
+                    failLater("Torrent engine error: couldn't identify the torrent (libtorrent4j API mismatch)");
+                    break;
+                }
                 if (!metadataReady && now > metadataDeadline) {
                     failLater("No peers or metadata after 90 seconds");
                     break;
