@@ -326,6 +326,7 @@ public final class TorrentStreamer {
         stopNow();
         magnetUri = magnet == null ? "" : magnet;
         running = true;
+        lastCrumb = "";
         peers = 0;
         rate = 0;
         progress = 0;
@@ -366,6 +367,7 @@ public final class TorrentStreamer {
         if (nodes != null) sp.setDhtBootstrapNodes(nodes);
         SessionParams params = new SessionParams();
         params.setSettings(sp);
+        diskIo = usePosixDiskIo(params);
 
         SessionManager sm = new SessionManager();
         sm.start(params);
@@ -814,6 +816,7 @@ public final class TorrentStreamer {
     private void notifyState(String override) {
         final Snapshot s = new Snapshot(override == null ? state() : override, currentTitle, selected,
                 peers, rate, progress, lastError, new ArrayList<>(videoFiles));
+        breadcrumb(s.state);
         final Listener l = listener;
         if (l != null) main.post(() -> l.onState(s));
     }
@@ -863,6 +866,10 @@ public final class TorrentStreamer {
 
     private void stopNow() {
         running = false;
+        try {
+            app.getSharedPreferences("PongPrefs", Context.MODE_PRIVATE).edit().remove("torrent_trace").apply();
+        } catch (Throwable ignored) {
+        }
         choicePending = false;
         bufferPending = false;
         joinPump();
@@ -881,6 +888,58 @@ public final class TorrentStreamer {
         progress = 0;
         peers = 0;
         rate = 0;
+    }
+
+    /**
+     * libtorrent 2 maps files into memory on 64-bit devices. On Android's external storage (FUSE, USB drives,
+     * SD cards) a write through such a mapping can kill the process with SIGBUS, so plain file I/O is used.
+     * The method's name differs between libtorrent4j versions, hence reflection. Returns the mode in use.
+     */
+    private static String usePosixDiskIo(SessionParams params) {
+        for (String name : new String[]{"setPosixDiskIO", "setPosixDiskIo", "posixDiskIO"}) {
+            try {
+                params.getClass().getMethod(name).invoke(params);
+                return "posix";
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            Object raw = params.getClass().getMethod("swig").invoke(params);
+            for (String name : new String[]{"set_posix_disk_io_constructor", "set_posix_disk_io"}) {
+                try {
+                    raw.getClass().getMethod(name).invoke(raw);
+                    return "posix";
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return "default (" + (android.os.Process.is64Bit() ? "mmap" : "posix") + ")";
+    }
+
+    private volatile String diskIo = "?";
+    private volatile String lastCrumb = "";
+
+    /**
+     * Notes what the torrent engine is doing, so a report after a hard kill can say where it happened.
+     * Written only when the stage changes.
+     */
+    private void breadcrumb(String stage) {
+        String key = stage + "|" + selected;
+        if (key.equals(lastCrumb)) return;
+        lastCrumb = key;
+        try {
+            File d = dir;
+            String size = selected >= 0 && sizes.get(selected) != null ? human(sizes.get(selected)) : "-";
+            String text = "Torrent stage: " + stage + " · file " + size + " · peers " + peers
+                    + "\nDisk I/O: " + diskIo + " · folder: " + (d == null ? "-" : d.getAbsolutePath())
+                    + "\nFree: " + (d == null ? "-" : human(d.getUsableSpace())) + " · ABI: "
+                    + (Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "?")
+                    + (android.os.Process.is64Bit() ? " (64-bit app)" : " (32-bit app)");
+            app.getSharedPreferences("PongPrefs", Context.MODE_PRIVATE).edit()
+                    .putString("torrent_trace", text).apply();
+        } catch (Throwable ignored) {
+        }
     }
 
     /** Waits for the pump to leave any native call, so the session is never deleted under it. */

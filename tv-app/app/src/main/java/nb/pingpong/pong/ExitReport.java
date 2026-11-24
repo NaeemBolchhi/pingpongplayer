@@ -37,8 +37,14 @@ final class ExitReport {
             String reason = reasonName(e.getReason());
             if (reason == null) return null; // a normal exit
             StringBuilder sb = new StringBuilder(reason);
+            if (e.getReason() == ApplicationExitInfo.REASON_SIGNALED
+                    || e.getReason() == ApplicationExitInfo.REASON_CRASH_NATIVE) {
+                sb.append(" ").append(signalName(e.getStatus()));
+            }
             if (e.getDescription() != null && !e.getDescription().isEmpty()) sb.append(": ").append(e.getDescription());
-            sb.append(String.format(Locale.ROOT, " (memory %d MB)", e.getPss() / 1024));
+            if (e.getPss() > 0) sb.append(String.format(Locale.ROOT, " (memory %d MB)", e.getPss() / 1024));
+            String trace = prefs.getString("torrent_trace", null);
+            if (trace != null) sb.append('\n').append(trace);
             if (e.getReason() == ApplicationExitInfo.REASON_CRASH_NATIVE
                     || e.getReason() == ApplicationExitInfo.REASON_ANR) {
                 String frames = frames(e);
@@ -48,6 +54,21 @@ final class ExitReport {
             return out.length() > 1800 ? out.substring(0, 1800) : out;
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    private static String signalName(int sig) {
+        switch (sig) {
+            case 6:
+                return "SIGABRT (6, aborted by native code)";
+            case 7:
+                return "SIGBUS (7, bad memory-mapped file access)";
+            case 9:
+                return "SIGKILL (9, killed by the system)";
+            case 11:
+                return "SIGSEGV (11, native crash)";
+            default:
+                return "signal " + sig;
         }
     }
 
