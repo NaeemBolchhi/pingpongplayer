@@ -243,9 +243,12 @@ public class MainActivity extends FragmentActivity {
 
     private void showLastCrash() {
         String crash = prefs.getString("last_crash", null);
-        if (crash == null) return;
+        String exit = ExitReport.take(this, prefs); // native crashes, ANRs, low-memory kills (Android 11+)
+        if (crash == null && exit == null) return;
         prefs.edit().remove("last_crash").apply();
-        showError(crash);
+        showError(crash != null ? crash : exit);
+        tvErrorDetail.setTextSize(11);
+        tvErrorDetail.setGravity(android.view.Gravity.START);
         tvErrorUrl.setText("Pong! closed unexpectedly last time. The details below help find the cause.");
     }
 
@@ -685,6 +688,8 @@ public class MainActivity extends FragmentActivity {
         hideLoading();
         idleContainer.setVisibility(View.GONE);
         tvErrorUrl.setText(currentUrl == null ? "" : currentUrl);
+        tvErrorDetail.setTextSize(14);
+        tvErrorDetail.setGravity(android.view.Gravity.CENTER);
         if (detail != null && !detail.isEmpty()) {
             tvErrorDetail.setText(detail);
             tvErrorDetail.setVisibility(View.VISIBLE);

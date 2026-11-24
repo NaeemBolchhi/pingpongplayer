@@ -18,6 +18,7 @@ import org.libtorrent4j.TorrentHandle;
 import org.libtorrent4j.TorrentInfo;
 import org.libtorrent4j.TorrentStatus;
 import org.libtorrent4j.alerts.AddTorrentAlert;
+import org.libtorrent4j.alerts.AlertType;
 import org.libtorrent4j.alerts.Alert;
 import org.libtorrent4j.alerts.FileErrorAlert;
 import org.libtorrent4j.alerts.MetadataReceivedAlert;
@@ -195,6 +196,7 @@ public final class TorrentStreamer {
     private int subsDeliveredFor = -1;
     private long lastMetaCheck;
     private int haveCount = -1;
+    private long lastHaveCount;
     private volatile boolean checkingFiles;
     /** Video file indices in the order they were played, most recent last. */
     private final List<Integer> recent = new ArrayList<>();
@@ -215,10 +217,27 @@ public final class TorrentStreamer {
     private final Map<Integer, String> names = new HashMap<>();
     private final Map<Integer, Long> sizes = new HashMap<>();
 
+    private static final int[] ALERT_TYPES = alertTypes(AlertType.ADD_TORRENT, AlertType.METADATA_RECEIVED,
+            AlertType.TORRENT_ERROR, AlertType.FILE_ERROR);
+
+    /** AlertType -> libtorrent's numeric type, via swig() (by reflection: its name varies). null = all alerts. */
+    private static int[] alertTypes(AlertType... types) {
+        try {
+            java.lang.reflect.Method m = AlertType.class.getMethod("swig");
+            int[] out = new int[types.length];
+            for (int i = 0; i < types.length; i++) out[i] = ((Number) m.invoke(types[i])).intValue();
+            return out;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     private final AlertListener alerts = new AlertListener() {
         @Override
         public int[] types() {
-            return null; // all alerts
+            // Only what we handle. Listening to everything made libtorrent4j wrap every block/piece/peer alert
+            // in Java objects (thousands per second while downloading).
+            return ALERT_TYPES;
         }
 
         /*
@@ -560,6 +579,7 @@ public final class TorrentStreamer {
         }
         bufferPending = true;
         haveCount = -1;
+        lastHaveCount = 0;
         bufferDeadline = System.currentTimeMillis() + BUFFER_TIMEOUT_MS;
         notifyState("buffering");
     }
@@ -662,7 +682,13 @@ public final class TorrentStreamer {
                         }
                     }
                     if (bufferPending) {
-                        int have = haveCount(h);
+                        // Each havePiece() is a round trip to libtorrent's network thread, so the whole-file
+                        // count runs once a second; the start/end windows below are small.
+                        int have = haveCount;
+                        if (now - lastHaveCount >= 1000) {
+                            lastHaveCount = now;
+                            have = haveCount(h);
+                        }
                         if (have > haveCount) {
                             // still making progress: keep waiting
                             if (haveCount >= 0) bufferDeadline = now + BUFFER_TIMEOUT_MS;

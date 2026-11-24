@@ -449,7 +449,9 @@
             android:layout_marginTop="12dp"
             android:layout_marginEnd="48dp"
             android:gravity="center"
-            android:maxWidth="520dp"
+            android:ellipsize="end"
+            android:maxLines="18"
+            android:maxWidth="720dp"
             android:textColor="#FFB4AB"
             android:textSize="14sp"
             android:visibility="gone" />
