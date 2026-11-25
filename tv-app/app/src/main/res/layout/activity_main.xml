@@ -99,6 +99,8 @@
     <!-- player menu -->
     <FrameLayout
         android:id="@+id/controls_overlay"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:visibility="gone">
@@ -118,6 +120,8 @@
         <!-- back, title and what the TV is doing -->
         <LinearLayout
             android:id="@+id/top_bar"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="top|start"
@@ -129,6 +133,8 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="44dp"
+                android:clipChildren="false"
+                android:clipToPadding="false"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -229,6 +235,8 @@
 
         <LinearLayout
             android:id="@+id/bottom_bar"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
@@ -286,6 +294,8 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:clipChildren="false"
+                android:clipToPadding="false"
                 android:layout_marginStart="-11dp"
                 android:layout_marginTop="10dp"
                 android:layout_marginEnd="-11dp"
@@ -529,12 +539,18 @@
             android:paddingStart="16dp"
             android:paddingEnd="16dp">
 
+            <View
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/idle_dot" />
+
             <TextView
                 android:id="@+id/tv_idle_chip"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:singleLine="true"
-                android:textColor="#7ED996"
+                android:textColor="#FFFFFF"
                 android:textSize="14sp"
                 android:textStyle="bold" />
         </LinearLayout>
