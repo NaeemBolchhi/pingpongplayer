@@ -14,10 +14,27 @@ android {
         versionName "1.2.2"
         // the repository that built the app (set by GitHub Actions; empty for local builds, which turns update checks off)
         buildConfigField "String", "UPDATE_REPO", "\"${System.getenv('GITHUB_REPOSITORY') ?: ''}\""
+        externalNativeBuild {
+            cmake {
+                abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            }
+        }
     }
 
     buildFeatures {
         buildConfig true
+    }
+
+    // Small native helper (src/main/cpp) that lets torrent streaming free disk space behind the playhead.
+    // Set PONG_NO_NATIVE=1 to build without it; the app then needs the whole video to fit, as before.
+    if (System.getenv("PONG_NO_NATIVE") != "1") {
+        ndkVersion "26.3.11579264"
+        externalNativeBuild {
+            cmake {
+                path "src/main/cpp/CMakeLists.txt"
+                version "3.22.1"
+            }
+        }
     }
 
     // one APK per ABI plus a universal APK

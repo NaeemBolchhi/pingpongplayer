@@ -50,9 +50,27 @@ jobs:
           done
         fi
 
+    # The TV app has a small native helper (tv-app/app/src/main/cpp) for low-storage torrent streaming.
+    # Install the exact NDK and CMake that tv-app/app/build.gradle asks for, so the build doesn't depend on
+    # what the runner image happens to ship.
+    - name: Install NDK and CMake
+      run: |
+        yes | sdkmanager --licenses > /dev/null || true
+        sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
+
     - name: Build TV App (Pong!)
       working-directory: tv-app
       run: gradle assembleRelease --no-daemon
+
+    # Fail loudly instead of shipping an APK without the helper.
+    - name: Check the native helper is in the TV APKs
+      run: |
+        for apk in tv-app/app/build/outputs/apk/release/Pong-TV-*.apk; do
+          if ! unzip -l "$apk" | grep -q "libpongpunch.so"; then
+            echo "::error::libpongpunch.so is missing from $apk"
+            exit 1
+          fi
+        done
 
     # SUBSOURCE_API_KEYS: repository secret holding a JSON array of SubSource API keys,
     # e.g. ["key-one","key-two","key-three"]. They are encrypted into the phone app at build time.

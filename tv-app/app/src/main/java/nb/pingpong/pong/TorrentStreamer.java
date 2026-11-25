@@ -72,6 +72,10 @@ public final class TorrentStreamer {
     private static final int WINDOW_PIECES = 24;
     private static final int AHEAD_PIECES = 96;
     private static final int UPLOAD_LIMIT = 100 * 1024; // bytes per second
+    // Window mode (only when the whole video doesn't fit): how much of the video stays on disk around the playhead.
+    private static final long WINDOW_BEHIND_BYTES = 32L * 1024 * 1024;
+    private static final long WINDOW_AHEAD_BYTES = 256L * 1024 * 1024;
+    private static final long WINDOW_MARGIN = 128L * 1024 * 1024; // free space that must remain besides the window
 
     /** Raised when this device cannot run the native torrent engine. */
     public static final class Unavailable extends Exception {
@@ -88,12 +92,14 @@ public final class TorrentStreamer {
         public final int rate;
         public final int progress;
         public final int fileProgress; // 0..1000: how much of the selected file has arrived (for the seek bar)
+        public final boolean windowMode; // low storage: only a part of the video around the playhead is kept on disk
         public final String error;
         public final List<TvStatus.TorrentFile> files;
 
         Snapshot(String state, String title, int selected, int peers, int rate, int progress, int fileProgress,
-                 String error, List<TvStatus.TorrentFile> files) {
+                 boolean windowMode, String error, List<TvStatus.TorrentFile> files) {
             this.fileProgress = fileProgress;
+            this.windowMode = windowMode;
             this.state = state;
             this.title = title;
             this.selected = selected;
@@ -213,6 +219,14 @@ public final class TorrentStreamer {
     private int firstPiece;
     private int lastPiece;
     private int windowPiece = -1;
+    // ---- window mode (see applyFile): only [winLo, winHi] plus the start and end of the file stay on disk
+    private volatile boolean windowMode;
+    private final Object winLock = new Object();
+    private int winBehind, winAhead;      // window size in pieces
+    private int winLo = -1, winHi = -2;   // pieces currently allowed to download / be on disk
+    private int headEnd, tailStart;       // pieces [firstPiece, headEnd) and [tailStart, lastPiece] are never released
+    private String windowPath = "";
+    private int clearMode;                // 0 = not looked up, 1 = TorrentHandle.clearPiece, 2 = swig clear_piece, -1 = none
     private final Set<Integer> deadlinePieces = new HashSet<>();
 
     private final List<TvStatus.TorrentFile> videoFiles = new ArrayList<>();
@@ -507,14 +521,47 @@ public final class TorrentStreamer {
         long free = dir.getUsableSpace();
         // least recently played first
         Collections.sort(kept, (a, b) -> Integer.compare(recent.indexOf(a), recent.indexOf(b)));
+        List<Integer> eraseAll = new ArrayList<>(erase);
+        long reclaimAll = reclaim;
         for (int v : kept) {
-            if (free + reclaim >= need) break;
-            erase.add(v);
-            reclaim += ti.files().fileSize(v);
+            if (free + reclaimAll >= need) break;
+            eraseAll.add(v);
+            reclaimAll += ti.files().fileSize(v);
         }
-        if (free + reclaim < need) {
-            fail("Not enough space: need " + human(need) + ", free " + human(free + reclaim));
-            return;
+        boolean window = false;
+        if (free + reclaimAll >= need) {
+            erase = eraseAll; // the whole video fits: everything works as usual
+        } else {
+            // Doesn't fit even after clearing space. Instead of refusing, keep only a window of the video on
+            // disk around the playhead and release what was watched. That needs the native helper, a file
+            // system that can free space inside a file, and a libtorrent that can forget a finished piece.
+            long wNeed = WINDOW_MARGIN + windowBytes(ti, index);
+            if (subs != null) for (int sub : subs) wNeed += Math.max(0, ti.files().fileSize(sub) - doneBytes(h, ti, sub));
+            if (!HolePunch.works(dir) || !canClearPieces(h)) {
+                fail("Not enough space: need " + human(need) + ", free " + human(free + reclaimAll)
+                        + " (this storage can't free space while streaming)");
+                return;
+            }
+            List<Integer> eraseW = new ArrayList<>(erase);
+            long reclaimW = reclaim;
+            long own = doneBytes(h, ti, index);
+            if (own > 0) {
+                // data of this video from earlier plays: start clean so nothing outside the window stays on disk
+                eraseW.add(index);
+                reclaimW += own;
+            }
+            for (int v : kept) {
+                if (free + reclaimW >= wNeed) break;
+                eraseW.add(v);
+                reclaimW += ti.files().fileSize(v);
+            }
+            if (free + reclaimW < wNeed) {
+                fail("Not enough space: need " + human(wNeed) + " even when streaming in pieces, free "
+                        + human(free + reclaimW));
+                return;
+            }
+            erase = eraseW;
+            window = true;
         }
 
         // Let the screen drop the old stream before its server goes away (VLC would report an error).
@@ -528,6 +575,7 @@ public final class TorrentStreamer {
         recent.remove(Integer.valueOf(index));
         recent.add(index);
         selected = index;
+        windowMode = false; // switched on below once the file's pieces are known
         choicePending = false;
         subsDeliveredFor = -1;
         subsWaitAt = 0;
@@ -549,15 +597,27 @@ public final class TorrentStreamer {
         lastPiece = ti.files().lastPieceIndexAtFile(index);
         windowPiece = -1;
         deadlinePieces.clear();
-        for (int p = firstPiece; p <= lastPiece; p++) h.piecePriority(p, Priority.DEFAULT);
         int startCount = Math.max(1, (int) Math.min(lastPiece - firstPiece + 1,
                 (START_BYTES + pieceLength - 1) / pieceLength));
         int tailCount = Math.max(1, (int) Math.min(lastPiece - firstPiece + 1,
                 (TAIL_BYTES + pieceLength - 1) / pieceLength));
-        for (int p = firstPiece; p < firstPiece + startCount; p++) h.piecePriority(p, Priority.TOP_PRIORITY);
-        for (int p = Math.max(firstPiece, lastPiece - tailCount + 1); p <= lastPiece; p++) {
-            h.piecePriority(p, Priority.TOP_PRIORITY);
+        headEnd = firstPiece + startCount;
+        tailStart = Math.max(firstPiece, lastPiece - tailCount + 1);
+        if (window) {
+            winBehind = windowBehindPieces(pieceLength);
+            winAhead = windowAheadPieces(pieceLength);
+            synchronized (winLock) {
+                winLo = firstPiece;
+                winHi = Math.min(lastPiece, firstPiece + winAhead);
+                for (int p = firstPiece; p <= lastPiece; p++) {
+                    h.piecePriority(p, p >= winLo && p <= winHi ? Priority.DEFAULT : Priority.IGNORE);
+                }
+            }
+        } else {
+            for (int p = firstPiece; p <= lastPiece; p++) h.piecePriority(p, Priority.DEFAULT);
         }
+        for (int p = firstPiece; p < headEnd; p++) h.piecePriority(p, Priority.TOP_PRIORITY);
+        for (int p = tailStart; p <= lastPiece; p++) h.piecePriority(p, Priority.TOP_PRIORITY);
 
         File file = new File(ti.files().filePath(index, dir.getAbsolutePath()));
         File parent = file.getParentFile();
@@ -575,6 +635,9 @@ public final class TorrentStreamer {
             return;
         }
 
+        windowPath = file.getAbsolutePath();
+        windowMode = window;
+
         RangeServer srv = new RangeServer(nameOf(file), fileSize, guessMime(nameOf(file)));
         try {
             int port = srv.start();
@@ -589,6 +652,104 @@ public final class TorrentStreamer {
         lastHaveCount = 0;
         bufferDeadline = System.currentTimeMillis() + BUFFER_TIMEOUT_MS;
         notifyState("buffering");
+    }
+
+    private static int windowBehindPieces(long pieceLength) {
+        return (int) Math.max(2, WINDOW_BEHIND_BYTES / Math.max(1, pieceLength));
+    }
+
+    private static int windowAheadPieces(long pieceLength) {
+        return (int) Math.max(4, WINDOW_AHEAD_BYTES / Math.max(1, pieceLength));
+    }
+
+    /** Most disk space the video can take in window mode: the window plus the start and end of the file. */
+    private static long windowBytes(TorrentInfo ti, int index) {
+        long pl = Math.max(1, ti.pieceLength());
+        long count = ti.files().lastPieceIndexAtFile(index) - ti.files().pieceIndexAtFile(index) + 1;
+        long head = Math.max(1, Math.min(count, (START_BYTES + pl - 1) / pl));
+        long tail = Math.max(1, Math.min(count, (TAIL_BYTES + pl - 1) / pl));
+        long pieces = windowBehindPieces(pl) + windowAheadPieces(pl) + 1 + head + tail;
+        return Math.min(count, pieces) * pl;
+    }
+
+    /** The object whose clear-piece method applies to this handle (the handle itself, or its swig object). */
+    private Object clearTargetFor(TorrentHandle h) throws Exception {
+        return clearMode == 2 ? h.getClass().getMethod("swig").invoke(h) : h;
+    }
+
+    /** Whether this libtorrent4j can make libtorrent forget a finished piece (found by reflection). */
+    private boolean canClearPieces(TorrentHandle h) {
+        if (clearMode == 0) {
+            try {
+                h.getClass().getMethod("clearPiece", int.class);
+                clearMode = 1;
+            } catch (Throwable t1) {
+                try {
+                    Object raw = h.getClass().getMethod("swig").invoke(h);
+                    raw.getClass().getMethod("clear_piece", int.class);
+                    clearMode = 2;
+                } catch (Throwable t2) {
+                    clearMode = -1;
+                }
+            }
+        }
+        return clearMode > 0;
+    }
+
+    /**
+     * Drops a piece: libtorrent forgets it (so it would be downloaded again if needed and never offered to
+     * peers), then its space on disk is freed. Returns false when libtorrent kept the piece, in which case
+     * nothing is freed (the file would otherwise read as zeros while libtorrent believes it has the data).
+     */
+    private boolean releasePiece(TorrentHandle h, int piece) {
+        try {
+            if (!canClearPieces(h)) return false;
+            boolean had = h.havePiece(piece);
+            Object target = clearTargetFor(h);
+            target.getClass().getMethod(clearMode == 1 ? "clearPiece" : "clear_piece", int.class).invoke(target, piece);
+            if (had && h.havePiece(piece)) return false;
+            long start = (long) piece * pieceLength - fileOffset;
+            long from = Math.max(0, start);
+            long to = Math.min(fileSize, start + pieceLength);
+            if (to > from) HolePunch.punch(windowPath, from, to - from);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Moves the window to [lo, hi]: releases pieces that left it, lets the new ones download. Holds winLock. */
+    private void slideWindow(TorrentHandle h, int lo, int hi) {
+        boolean ok = true;
+        if (winHi >= winLo) {
+            for (int p = winLo; p <= winHi && ok; p++) {
+                if ((p >= lo && p <= hi) || p < headEnd || p >= tailStart) continue;
+                ok = releasePiece(h, p);
+                if (ok) h.piecePriority(p, Priority.IGNORE);
+            }
+        }
+        if (!ok) {
+            // libtorrent can't forget pieces here: give up the window and download normally (the disk may fill up)
+            windowMode = false;
+            for (int p = firstPiece; p <= lastPiece; p++) h.piecePriority(p, Priority.DEFAULT);
+            return;
+        }
+        for (int p = lo; p <= hi; p++) h.piecePriority(p, Priority.DEFAULT);
+        winLo = lo;
+        winHi = hi;
+    }
+
+    /** Seek bar value in window mode: how far the video is downloaded without a gap from the playhead. */
+    private int windowFileProgress(TorrentHandle h) {
+        int count = lastPiece - firstPiece + 1;
+        if (count <= 0) return 0;
+        int from = windowPiece < 0 ? firstPiece : windowPiece;
+        int end = from - 1;
+        for (int p = from; p <= lastPiece && p <= from + winAhead; p++) {
+            if (!h.havePiece(p)) break;
+            end = p;
+        }
+        return (int) Math.min(1000, Math.max(0, (long) (end + 1 - firstPiece) * 1000 / count));
     }
 
     /** Bytes of a file already downloaded and verified (counted in whole pieces). */
@@ -720,10 +881,11 @@ public final class TorrentStreamer {
                         if (currentUrl != null && now - lastFileCount >= 1000) {
                             lastFileCount = now;
                             int count = lastPiece - firstPiece + 1;
-                            if (count > 0) fileProgress = (int) ((long) haveCount(h) * 1000 / count);
+                            if (windowMode) fileProgress = windowFileProgress(h);
+                            else if (count > 0) fileProgress = (int) ((long) haveCount(h) * 1000 / count);
                         }
                     }
-                    if (bufferPending && haveCount > 0) {
+                    if (bufferPending && haveCount > 0 && !windowMode) {
                         int count = lastPiece - firstPiece + 1;
                         if (count > 0) fileProgress = (int) Math.min(1000, (long) haveCount * 1000 / count);
                     }
@@ -785,6 +947,13 @@ public final class TorrentStreamer {
     /** Pieces of the selected file that have arrived. */
     private int haveCount(TorrentHandle h) {
         int have = 0;
+        if (windowMode) {
+            // only the window and the start/end of the file can be on disk; counting the rest would be wasted calls
+            for (int p = firstPiece; p < headEnd; p++) if (h.havePiece(p)) have++;
+            for (int p = Math.max(headEnd, winLo); p <= winHi && p < tailStart; p++) if (h.havePiece(p)) have++;
+            for (int p = tailStart; p <= lastPiece; p++) if (h.havePiece(p)) have++;
+            return have;
+        }
         for (int p = firstPiece; p <= lastPiece; p++) if (h.havePiece(p)) have++;
         return have;
     }
@@ -829,7 +998,7 @@ public final class TorrentStreamer {
 
     private void notifyState(String override) {
         final Snapshot s = new Snapshot(override == null ? state() : override, currentTitle, selected,
-                peers, rate, progress, fileProgress, lastError, new ArrayList<>(videoFiles));
+                peers, rate, progress, fileProgress, windowMode, lastError, new ArrayList<>(videoFiles));
         breadcrumb(s.state);
         final Listener l = listener;
         if (l != null) main.post(() -> l.onState(s));
@@ -1009,10 +1178,20 @@ public final class TorrentStreamer {
             }
         }
         deadlinePieces.clear();
-        int lo = Math.max(firstPiece, piece - 8);
-        int hi = Math.min(lastPiece, piece + WINDOW_PIECES + AHEAD_PIECES);
-        for (int p = lo; p <= hi; p++) h.piecePriority(p, Priority.DEFAULT);
-        int windowEnd = Math.min(lastPiece + 1, piece + WINDOW_PIECES);
+        int deadlineCount = WINDOW_PIECES;
+        synchronized (winLock) {
+            if (windowMode) {
+                slideWindow(h, Math.max(firstPiece, piece - winBehind), Math.min(lastPiece, piece + winAhead));
+            }
+            if (!windowMode) {
+                int lo = Math.max(firstPiece, piece - 8);
+                int hi = Math.min(lastPiece, piece + WINDOW_PIECES + AHEAD_PIECES);
+                for (int p = lo; p <= hi; p++) h.piecePriority(p, Priority.DEFAULT);
+            } else {
+                deadlineCount = Math.min(WINDOW_PIECES, winAhead);
+            }
+        }
+        int windowEnd = Math.min(lastPiece + 1, piece + deadlineCount);
         for (int p = piece; p < windowEnd; p++) {
             h.piecePriority(p, Priority.TOP_PRIORITY);
             h.setPieceDeadline(p, 15_000);

@@ -421,7 +421,8 @@ public class MainActivity extends FragmentActivity {
             case "buffering":
                 return "Buffering " + s.progress + "% · " + peers + " · " + humanRate(s.rate);
             case "streaming":
-                return playing ? s.progress + "% downloaded · " + peers + " · " + humanRate(s.rate)
+                return playing ? (s.windowMode ? "Low storage mode" : s.progress + "% downloaded")
+                        + " · " + peers + " · " + humanRate(s.rate)
                         : "Starting video · " + peers + " · " + humanRate(s.rate);
             case "error":
                 return s.error == null || s.error.isEmpty() ? "Torrent playback failed" : s.error;
@@ -1439,7 +1440,8 @@ public class MainActivity extends FragmentActivity {
         if (currentIsTorrent && ts != null) {
             String peers = ts.peers == 1 ? "1 peer" : ts.peers + " peers";
             if ("streaming".equals(ts.state)) {
-                status = "Torrent · " + (ts.progress >= 100 ? "downloaded" : ts.progress + "% downloaded")
+                status = "Torrent · " + (ts.windowMode ? "low storage mode"
+                        : ts.progress >= 100 ? "downloaded" : ts.progress + "% downloaded")
                         + " · " + peers;
             } else {
                 status = "Torrent · " + torrentMessage(ts, loaded);
